@@ -66,5 +66,11 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>Potrebujeme kameru na fotografovanie mesiaca</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Potrebujeme polohu na výpočet pozície mesiaca</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>Potrebujeme polohu na výpočet pozície mesiaca</string>
 </dict>
 </plist>
