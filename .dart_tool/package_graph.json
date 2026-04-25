@@ -9,6 +9,7 @@
       "dependencies": [
         "camera",
         "flutter",
+        "flutter_compass",
         "geolocator",
         "permission_handler",
         "vector_math"
@@ -41,6 +42,13 @@
         "stream_channel",
         "test_api",
         "vector_math"
+      ]
+    },
+    {
+      "name": "flutter_compass",
+      "version": "0.8.1",
+      "dependencies": [
+        "flutter"
       ]
     },
     {
