@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_compass/flutter_compass.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'moon_calculator.dart';
@@ -20,15 +21,13 @@ class _CameraScreenState extends State<CameraScreen>
   List<CameraDescription>? _cameras;
   MoonPosition? _moonPosition;
   Position? _devicePosition;
-  double _deviceAzimuth = 0; // compass heading (placeholder)
-  double _devicePitch = 0;   // tilt angle (placeholder)
+  double _deviceAzimuth = 0;
+  double _devicePitch = 0;
   bool _isReady = false;
   bool _isTakingPhoto = false;
-  String? _lastPhotoPath;
   String _statusMessage = 'Inicializujem...';
 
   late AnimationController _pulseController;
-  late AnimationController _arrowController;
   late Animation<double> _pulseAnimation;
 
   Timer? _moonUpdateTimer;
@@ -40,10 +39,6 @@ class _CameraScreenState extends State<CameraScreen>
       duration: const Duration(seconds: 2),
       vsync: this,
     )..repeat(reverse: true);
-    _arrowController = AnimationController(
-      duration: const Duration(milliseconds: 500),
-      vsync: this,
-    );
     _pulseAnimation = Tween<double>(begin: 0.95, end: 1.05).animate(
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
@@ -54,6 +49,7 @@ class _CameraScreenState extends State<CameraScreen>
     await _requestPermissions();
     await _initCamera();
     await _getLocation();
+    _startCompass();
     _startMoonUpdates();
   }
 
@@ -62,6 +58,16 @@ class _CameraScreenState extends State<CameraScreen>
       Permission.camera,
       Permission.location,
     ].request();
+  }
+
+  void _startCompass() {
+    FlutterCompass.events?.listen((event) {
+      if (mounted && event.heading != null) {
+        setState(() {
+          _deviceAzimuth = event.heading!;
+        });
+      }
+    });
   }
 
   Future<void> _initCamera() async {
@@ -78,10 +84,8 @@ class _CameraScreenState extends State<CameraScreen>
         imageFormatGroup: ImageFormatGroup.jpeg,
       );
       await _controller!.initialize();
-      // Set exposure mode for moon photography
       await _controller!.setExposureMode(ExposureMode.auto);
       await _controller!.setFocusMode(FocusMode.auto);
-
       if (mounted) setState(() {});
     } catch (e) {
       setState(() => _statusMessage = 'Chyba kamery: $e');
@@ -105,7 +109,7 @@ class _CameraScreenState extends State<CameraScreen>
       setState(() {
         _devicePosition = pos;
         _isReady = true;
-        _statusMessage = 'GPS: ${pos.latitude.toStringAsFixed(3)}, ${pos.longitude.toStringAsFixed(3)}';
+        _statusMessage = 'GPS OK';
       });
       _updateMoonPosition();
     } catch (e) {
@@ -131,27 +135,20 @@ class _CameraScreenState extends State<CameraScreen>
     });
   }
 
-  // Calculate where moon appears on screen relative to device orientation
-  // Returns offset from center (-1 to 1 in each axis), null if behind
   Offset? _getMoonScreenOffset() {
     if (_moonPosition == null) return null;
 
-    // Difference between moon azimuth and device heading
     double azDiff = _moonPosition!.azimuth - _deviceAzimuth;
-    // Normalize to -180..180
     while (azDiff > 180) azDiff -= 360;
     while (azDiff < -180) azDiff += 360;
 
-    // Altitude difference (device pitch vs moon altitude)
     double altDiff = _moonPosition!.altitude - _devicePitch;
 
-    // If moon is way off screen (>45 degrees), just show arrow direction
-    // FOV assumption: ~60 degrees horizontal, ~45 vertical
     final double hFov = 60.0;
     final double vFov = 45.0;
 
-    final double nx = azDiff / (hFov / 2); // normalized -1..1
-    final double ny = -altDiff / (vFov / 2); // inverted y
+    final double nx = azDiff / (hFov / 2);
+    final double ny = -altDiff / (vFov / 2);
 
     return Offset(nx, ny);
   }
@@ -164,9 +161,7 @@ class _CameraScreenState extends State<CameraScreen>
 
   Future<void> _lockExposureOnMoon() async {
     if (_controller == null || !_isMoonInFrame()) return;
-    final size = MediaQuery.of(context).size;
     final offset = _getMoonScreenOffset()!;
-    // Convert to camera point (0-1)
     final point = Offset(
       (offset.dx + 1) / 2,
       (offset.dy + 1) / 2,
@@ -178,15 +173,11 @@ class _CameraScreenState extends State<CameraScreen>
   Future<void> _takePicture() async {
     if (_controller == null || _isTakingPhoto) return;
     setState(() => _isTakingPhoto = true);
-
     try {
       await _lockExposureOnMoon();
-      await Future.delayed(const Duration(milliseconds: 500)); // stabilize
+      await Future.delayed(const Duration(milliseconds: 500));
       final file = await _controller!.takePicture();
-      setState(() {
-        _lastPhotoPath = file.path;
-        _isTakingPhoto = false;
-      });
+      setState(() => _isTakingPhoto = false);
       _showPhotoPreview(file.path);
     } catch (e) {
       setState(() => _isTakingPhoto = false);
@@ -231,7 +222,6 @@ class _CameraScreenState extends State<CameraScreen>
   void dispose() {
     _moonUpdateTimer?.cancel();
     _pulseController.dispose();
-    _arrowController.dispose();
     _controller?.dispose();
     super.dispose();
   }
@@ -243,17 +233,10 @@ class _CameraScreenState extends State<CameraScreen>
       body: Stack(
         fit: StackFit.expand,
         children: [
-          // Camera preview
           if (_controller != null && _controller!.value.isInitialized)
             CameraPreview(_controller!),
-
-          // Moon overlay
           _buildMoonOverlay(),
-
-          // Top info bar
           _buildTopBar(),
-
-          // Bottom controls
           _buildBottomControls(),
         ],
       ),
@@ -262,7 +245,6 @@ class _CameraScreenState extends State<CameraScreen>
 
   Widget _buildMoonOverlay() {
     if (_moonPosition == null) return const SizedBox();
-
     final inFrame = _isMoonInFrame();
     final offset = _getMoonScreenOffset();
 
@@ -273,10 +255,8 @@ class _CameraScreenState extends State<CameraScreen>
       final cy = h / 2;
 
       if (inFrame && offset != null) {
-        // Draw circle around moon position
         final moonX = cx + offset.dx * cx * 0.8;
         final moonY = cy + offset.dy * cy * 0.8;
-
         return AnimatedBuilder(
           animation: _pulseAnimation,
           builder: (_, __) => CustomPaint(
@@ -288,7 +268,6 @@ class _CameraScreenState extends State<CameraScreen>
           ),
         );
       } else if (offset != null) {
-        // Draw arrow pointing toward moon
         final angle = atan2(offset.dy, offset.dx);
         return CustomPaint(
           painter: MoonArrowPainter(
@@ -342,9 +321,7 @@ class _CameraScreenState extends State<CameraScreen>
                             : Colors.red.withOpacity(0.3),
                         borderRadius: BorderRadius.circular(12),
                         border: Border.all(
-                          color: _moonPosition!.isAboveHorizon
-                              ? Colors.blue
-                              : Colors.red,
+                          color: _moonPosition!.isAboveHorizon ? Colors.blue : Colors.red,
                           width: 1,
                         ),
                       ),
@@ -406,7 +383,6 @@ class _CameraScreenState extends State<CameraScreen>
 
   Widget _buildBottomControls() {
     final inFrame = _isMoonInFrame();
-
     return Positioned(
       bottom: 0,
       left: 0,
@@ -423,7 +399,6 @@ class _CameraScreenState extends State<CameraScreen>
           ),
           child: Column(
             children: [
-              // Status tip
               Text(
                 inFrame
                     ? '🎯 Mesiac je v zábere! Sprav fotku!'
@@ -440,9 +415,8 @@ class _CameraScreenState extends State<CameraScreen>
                 ),
               ),
               const SizedBox(height: 20),
-              // Shutter button
               GestureDetector(
-                onTap: inFrame ? _takePicture : null,
+                onTap: _takePicture,
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
                   width: 80,
@@ -459,22 +433,12 @@ class _CameraScreenState extends State<CameraScreen>
                       width: 3,
                     ),
                     boxShadow: inFrame
-                        ? [
-                            BoxShadow(
-                              color: Colors.white.withOpacity(0.3),
-                              blurRadius: 20,
-                              spreadRadius: 5,
-                            )
-                          ]
+                        ? [BoxShadow(color: Colors.white.withOpacity(0.3), blurRadius: 20, spreadRadius: 5)]
                         : null,
                   ),
                   child: _isTakingPhoto
                       ? const Center(child: CircularProgressIndicator(color: Colors.white))
-                      : Icon(
-                          Icons.camera,
-                          size: 36,
-                          color: inFrame ? Colors.black : Colors.white38,
-                        ),
+                      : Icon(Icons.camera, size: 36, color: inFrame ? Colors.black : Colors.white38),
                 ),
               ),
             ],
@@ -485,7 +449,6 @@ class _CameraScreenState extends State<CameraScreen>
   }
 }
 
-// Painter for the moon circle overlay
 class MoonCirclePainter extends CustomPainter {
   final Offset center;
   final double radius;
@@ -494,7 +457,6 @@ class MoonCirclePainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Outer glow
     final glowPaint = Paint()
       ..color = Colors.white.withOpacity(0.15)
       ..style = PaintingStyle.stroke
@@ -502,50 +464,26 @@ class MoonCirclePainter extends CustomPainter {
       ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 15);
     canvas.drawCircle(center, radius, glowPaint);
 
-    // Main circle
     final circlePaint = Paint()
       ..color = Colors.white.withOpacity(0.8)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 2.5;
     canvas.drawCircle(center, radius, circlePaint);
 
-    // Crosshair lines
     final linePaint = Paint()
       ..color = Colors.white.withOpacity(0.5)
       ..strokeWidth = 1;
 
-    // Top tick
-    canvas.drawLine(
-      Offset(center.dx, center.dy - radius - 10),
-      Offset(center.dx, center.dy - radius + 10),
-      linePaint,
-    );
-    // Bottom tick
-    canvas.drawLine(
-      Offset(center.dx, center.dy + radius - 10),
-      Offset(center.dx, center.dy + radius + 10),
-      linePaint,
-    );
-    // Left tick
-    canvas.drawLine(
-      Offset(center.dx - radius - 10, center.dy),
-      Offset(center.dx - radius + 10, center.dy),
-      linePaint,
-    );
-    // Right tick
-    canvas.drawLine(
-      Offset(center.dx + radius - 10, center.dy),
-      Offset(center.dx + radius + 10, center.dy),
-      linePaint,
-    );
+    canvas.drawLine(Offset(center.dx, center.dy - radius - 10), Offset(center.dx, center.dy - radius + 10), linePaint);
+    canvas.drawLine(Offset(center.dx, center.dy + radius - 10), Offset(center.dx, center.dy + radius + 10), linePaint);
+    canvas.drawLine(Offset(center.dx - radius - 10, center.dy), Offset(center.dx - radius + 10, center.dy), linePaint);
+    canvas.drawLine(Offset(center.dx + radius - 10, center.dy), Offset(center.dx + radius + 10, center.dy), linePaint);
 
-    // Center dot
     final dotPaint = Paint()
       ..color = Colors.white.withOpacity(0.6)
       ..style = PaintingStyle.fill;
     canvas.drawCircle(center, 3, dotPaint);
 
-    // "MESIAC" label
     final tp = TextPainter(
       text: TextSpan(
         text: '🌙 MESIAC',
@@ -562,20 +500,13 @@ class MoonCirclePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(MoonCirclePainter old) =>
-      old.center != center || old.radius != radius;
+  bool shouldRepaint(MoonCirclePainter old) => old.center != center || old.radius != radius;
 }
 
-// Painter for the directional arrow
 class MoonArrowPainter extends CustomPainter {
   final double centerX, centerY, angle, altitude;
 
-  MoonArrowPainter({
-    required this.centerX,
-    required this.centerY,
-    required this.angle,
-    required this.altitude,
-  });
+  MoonArrowPainter({required this.centerX, required this.centerY, required this.angle, required this.altitude});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -583,7 +514,6 @@ class MoonArrowPainter extends CustomPainter {
     final ax = centerX + cos(angle) * arrowRadius;
     final ay = centerY + sin(angle) * arrowRadius;
 
-    // Arrow background circle
     final bgPaint = Paint()
       ..color = Colors.black.withOpacity(0.4)
       ..style = PaintingStyle.fill;
@@ -595,7 +525,6 @@ class MoonArrowPainter extends CustomPainter {
       ..strokeWidth = 1.5;
     canvas.drawCircle(Offset(ax, ay), 36, borderPaint);
 
-    // Draw arrow
     canvas.save();
     canvas.translate(ax, ay);
     canvas.rotate(angle);
@@ -603,7 +532,6 @@ class MoonArrowPainter extends CustomPainter {
     final arrowPaint = Paint()
       ..color = Colors.white
       ..style = PaintingStyle.fill;
-
     final path = Path()
       ..moveTo(20, 0)
       ..lineTo(-10, -10)
@@ -613,14 +541,12 @@ class MoonArrowPainter extends CustomPainter {
     canvas.drawPath(path, arrowPaint);
     canvas.restore();
 
-    // Moon emoji
     final tp = TextPainter(
       text: const TextSpan(text: '🌙', style: TextStyle(fontSize: 16)),
       textDirection: TextDirection.ltr,
     )..layout();
     tp.paint(canvas, Offset(ax - tp.width / 2, ay - tp.height / 2 - 20));
 
-    // Altitude info
     final altTp = TextPainter(
       text: TextSpan(
         text: '${altitude.toStringAsFixed(0)}°',
