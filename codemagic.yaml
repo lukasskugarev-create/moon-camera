@@ -1,6 +1,17 @@
-- name: Create IPA
+workflows:
+  ios-workflow:
+    name: iOS Workflow
+    instance_type: mac_mini_m2
+    environment:
+      flutter: stable
+      xcode: latest
+    scripts:
+      - name: Get Flutter packages
+        script: flutter pub get
+      - name: Build iOS
+        script: flutter build ios --release --no-codesign
+      - name: Create IPA
         script: |
-          find build/ios -name "Runner.app" -type d
           APP_PATH=$(find build/ios -name "Runner.app" -type d | head -1)
           mkdir -p Payload
           cp -r "$APP_PATH" Payload/
