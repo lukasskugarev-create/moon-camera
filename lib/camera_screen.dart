@@ -327,19 +327,21 @@ class _CameraScreenState extends State<CameraScreen>
       body: Stack(
         fit: StackFit.expand,
         children: [
+          // Camera preview - fixed stretch
           if (_controller != null && _controller!.value.isInitialized)
-          SizedBox.expand(
-            child: FittedBox(
-              fit: BoxFit.cover,
-              child: SizedBox(
-                width: _controller!.value.previewSize!.height,
-                height: _controller!.value.previewSize!.width,
-                child: CameraPreview(_controller!),
+            SizedBox.expand(
+              child: FittedBox(
+                fit: BoxFit.cover,
+                child: SizedBox(
+                  width: _controller!.value.previewSize!.height,
+                  height: _controller!.value.previewSize!.width,
+                  child: CameraPreview(_controller!),
+                ),
               ),
             ),
-          ),         
           _buildMoonOverlay(),
           _buildTopBar(),
+          _buildSkyMap(),
           if (_showControls) _buildControlsPanel(),
           _buildBottomControls(),
           if (_timerCountdown > 0) _buildCountdown(),
@@ -360,6 +362,31 @@ class _CameraScreenState extends State<CameraScreen>
         child: Center(
           child: Text('$_timerCountdown',
             style: const TextStyle(color: Colors.white, fontSize: 60, fontWeight: FontWeight.bold)),
+        ),
+      ),
+    );
+  }
+
+  // Mini sky map - bottom right
+  Widget _buildSkyMap() {
+    if (_moonPosition == null) return const SizedBox();
+    return Positioned(
+      right: 16,
+      bottom: 140,
+      child: Container(
+        width: 110,
+        height: 110,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: Colors.black.withOpacity(0.65),
+          border: Border.all(color: Colors.white24, width: 1.5),
+        ),
+        child: CustomPaint(
+          painter: SkyMapPainter(
+            moonAzimuth: _moonPosition!.azimuth,
+            moonAltitude: _moonPosition!.altitude,
+            deviceAzimuth: _deviceAzimuth,
+          ),
         ),
       ),
     );
@@ -642,6 +669,116 @@ class _CameraScreenState extends State<CameraScreen>
       ),
     );
   }
+}
+
+// Sky map painter
+class SkyMapPainter extends CustomPainter {
+  final double moonAzimuth;
+  final double moonAltitude;
+  final double deviceAzimuth;
+
+  SkyMapPainter({
+    required this.moonAzimuth,
+    required this.moonAltitude,
+    required this.deviceAzimuth,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final cx = size.width / 2;
+    final cy = size.height / 2;
+    final r = size.width / 2 - 4;
+
+    // Background
+    canvas.drawCircle(
+      Offset(cx, cy), r,
+      Paint()..color = const Color(0xFF0A0A2A),
+    );
+
+    // Horizon circle
+    canvas.drawCircle(Offset(cx, cy), r * 0.95,
+      Paint()..color = Colors.white12..style = PaintingStyle.stroke..strokeWidth = 0.5);
+
+    // Altitude rings
+    for (double alt in [30, 60]) {
+      final ringR = r * (1 - alt / 90) * 0.95;
+      canvas.drawCircle(Offset(cx, cy), ringR,
+        Paint()..color = Colors.white10..style = PaintingStyle.stroke..strokeWidth = 0.5);
+    }
+
+    // Cardinal directions
+    final dirPaint = TextPainter(textDirection: TextDirection.ltr);
+    for (var entry in {'N': 0.0, 'E': 90.0, 'S': 180.0, 'W': 270.0}.entries) {
+      final angle = (entry.value - deviceAzimuth) * pi / 180;
+      final dx = cx + sin(angle) * (r * 0.82);
+      final dy = cy - cos(angle) * (r * 0.82);
+      dirPaint.text = TextSpan(
+        text: entry.key,
+        style: TextStyle(
+          color: entry.key == 'N' ? Colors.redAccent : Colors.white38,
+          fontSize: 8,
+          fontWeight: FontWeight.bold,
+        ),
+      );
+      dirPaint.layout();
+      dirPaint.paint(canvas, Offset(dx - dirPaint.width / 2, dy - dirPaint.height / 2));
+    }
+
+    // Device direction indicator (FOV wedge)
+    final fovAngle = 30.0 * pi / 180;
+    final deviceAngleRad = 0.0; // device is always "up" in the map
+    final wedgePath = Path();
+    wedgePath.moveTo(cx, cy);
+    wedgePath.arcTo(
+      Rect.fromCircle(center: Offset(cx, cy), radius: r * 0.9),
+      -pi / 2 - fovAngle / 2,
+      fovAngle,
+      false,
+    );
+    wedgePath.close();
+    canvas.drawPath(wedgePath, Paint()..color = Colors.white.withOpacity(0.08));
+
+    // Moon dot
+    if (moonAltitude > -10) {
+      final moonAngle = (moonAzimuth - deviceAzimuth) * pi / 180;
+      final altNorm = moonAltitude.clamp(-10.0, 90.0);
+      final moonR = r * (1 - (altNorm + 10) / 100) * 0.9;
+      final mx = cx + sin(moonAngle) * moonR;
+      final my = cy - cos(moonAngle) * moonR;
+
+      // Glow
+      canvas.drawCircle(Offset(mx, my), 8,
+        Paint()..color = Colors.yellow.withOpacity(0.2)..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4));
+
+      // Moon dot
+      canvas.drawCircle(Offset(mx, my), 5,
+        Paint()..color = moonAltitude > 0 ? Colors.yellow : Colors.yellow.withOpacity(0.4));
+
+      // Label
+      final moonTp = TextPainter(
+        text: const TextSpan(text: '🌙', style: TextStyle(fontSize: 8)),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      moonTp.paint(canvas, Offset(mx - moonTp.width / 2, my - moonTp.height - 3));
+    }
+
+    // Center dot (you)
+    canvas.drawCircle(Offset(cx, cy), 3,
+      Paint()..color = Colors.white54..style = PaintingStyle.fill);
+
+    // "SKY" label
+    final labelTp = TextPainter(
+      text: const TextSpan(text: 'OBLOHA', style: TextStyle(color: Colors.white30, fontSize: 7, letterSpacing: 1)),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    labelTp.paint(canvas, Offset(cx - labelTp.width / 2, size.height - 12));
+  }
+
+  @override
+  bool shouldRepaint(SkyMapPainter old) =>
+      old.moonAzimuth != moonAzimuth ||
+      old.moonAltitude != moonAltitude ||
+      old.deviceAzimuth != deviceAzimuth;
 }
 
 class MoonCirclePainter extends CustomPainter {
