@@ -23,6 +23,7 @@ class _CameraScreenState extends State<CameraScreen>
   CameraController? _controller;
   List<CameraDescription>? _cameras;
   int _selectedCameraIndex = 0;
+  bool _isSwitchingCamera = false;
   MoonPosition? _moonPosition;
   Position? _devicePosition;
   double _deviceAzimuth = 0;
@@ -48,7 +49,6 @@ class _CameraScreenState extends State<CameraScreen>
   late Animation<double> _rotateAnimation;
   Timer? _moonUpdateTimer;
 
-  // Lens labels based on camera count
   List<String> get _lensLabels {
     if (_cameras == null) return [];
     switch (_cameras!.length) {
@@ -97,36 +97,55 @@ class _CameraScreenState extends State<CameraScreen>
 
   Future<void> _initCamera({int index = 0}) async {
     try {
-      _cameras = await availableCameras();
-      if (_cameras == null || _cameras!.isEmpty) return;
-
-      // Find back cameras only
-      final backCameras = _cameras!.where((c) => c.lensDirection == CameraLensDirection.back).toList();
+      final allCameras = await availableCameras();
+      final backCameras = allCameras.where((c) => c.lensDirection == CameraLensDirection.back).toList();
       if (backCameras.isEmpty) return;
-
-      // Replace _cameras with only back cameras
       _cameras = backCameras;
-      final safeIndex = index.clamp(0, _cameras!.length - 1);
-      _selectedCameraIndex = safeIndex;
 
-      await _controller?.dispose();
-      _controller = CameraController(_cameras![safeIndex], ResolutionPreset.max, enableAudio: false, imageFormatGroup: ImageFormatGroup.jpeg);
-      await _controller!.initialize();
-      await _controller!.setExposureMode(ExposureMode.auto);
-      await _controller!.setFocusMode(FocusMode.auto);
-      _minExposure = await _controller!.getMinExposureOffset();
-      _maxExposure = await _controller!.getMaxExposureOffset();
-      _maxZoom = await _controller!.getMaxZoomLevel();
-      _zoomLevel = 1.0;
+      final safeIndex = index.clamp(0, _cameras!.length - 1);
+
+      // Dispose old controller properly
+      final oldController = _controller;
+      _controller = null;
       if (mounted) setState(() {});
+      await oldController?.dispose();
+
+      final newController = CameraController(
+        _cameras![safeIndex],
+        ResolutionPreset.max,
+        enableAudio: false,
+        imageFormatGroup: ImageFormatGroup.jpeg,
+      );
+      await newController.initialize();
+      await newController.setExposureMode(ExposureMode.auto);
+      await newController.setFocusMode(FocusMode.auto);
+
+      final minExp = await newController.getMinExposureOffset();
+      final maxExp = await newController.getMaxExposureOffset();
+      final maxZoom = await newController.getMaxZoomLevel();
+
+      if (mounted) {
+        setState(() {
+          _controller = newController;
+          _selectedCameraIndex = safeIndex;
+          _minExposure = minExp;
+          _maxExposure = maxExp;
+          _maxZoom = maxZoom;
+          _zoomLevel = 1.0;
+          _exposureOffset = 0.0;
+        });
+      }
     } catch (e) {
-      setState(() => _statusMessage = 'Chyba kamery: $e');
+      if (mounted) setState(() => _statusMessage = 'Chyba kamery: $e');
     }
   }
 
   Future<void> _switchCamera(int index) async {
     if (_cameras == null || index >= _cameras!.length) return;
+    if (index == _selectedCameraIndex || _isSwitchingCamera) return;
+    setState(() => _isSwitchingCamera = true);
     await _initCamera(index: index);
+    if (mounted) setState(() => _isSwitchingCamera = false);
   }
 
   Future<void> _getLocation() async {
@@ -326,6 +345,8 @@ class _CameraScreenState extends State<CameraScreen>
                 ),
               ),
             ),
+          if (_isSwitchingCamera)
+            Container(color: Colors.black.withOpacity(0.6), child: Center(child: CircularProgressIndicator(color: _uiColor))),
           if (_nightMode) Container(color: Colors.red.withOpacity(0.08)),
           _buildMoonOverlay(),
           _buildTopBar(),
@@ -339,13 +360,14 @@ class _CameraScreenState extends State<CameraScreen>
     );
   }
 
+  // Lens switcher — bottom left corner
   Widget _buildLensSwitcher() {
     if (_cameras == null || _cameras!.length <= 1) return const SizedBox();
     final labels = _lensLabels;
     return Positioned(
-      bottom: 140,
-      left: 0, right: 0,
-      child: Center(
+      bottom: 30,
+      left: 16,
+      child: SafeArea(
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
           decoration: BoxDecoration(
@@ -358,7 +380,7 @@ class _CameraScreenState extends State<CameraScreen>
             children: List.generate(_cameras!.length, (i) {
               final isSelected = i == _selectedCameraIndex;
               return GestureDetector(
-                onTap: () => _switchCamera(i),
+                onTap: _isSwitchingCamera ? null : () => _switchCamera(i),
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 200),
                   margin: const EdgeInsets.symmetric(horizontal: 3),
@@ -397,7 +419,7 @@ class _CameraScreenState extends State<CameraScreen>
   Widget _buildSkyMap() {
     if (_moonPosition == null) return const SizedBox();
     return Positioned(
-      right: 16, bottom: 190,
+      right: 16, bottom: 140,
       child: Container(
         width: 110, height: 110,
         decoration: BoxDecoration(
