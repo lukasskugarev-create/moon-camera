@@ -8,18 +8,23 @@ workflows:
     scripts:
       - name: Get Flutter packages
         script: flutter pub get
-      - name: Remove code signing
-        script: |
-          sed -i '' 's/DEVELOPMENT_TEAM = [^;]*;/DEVELOPMENT_TEAM = "";/g' ios/Runner.xcodeproj/project.pbxproj
-          sed -i '' 's/CODE_SIGN_IDENTITY = "Apple Development";/CODE_SIGN_IDENTITY = "";/g' ios/Runner.xcodeproj/project.pbxproj
-          sed -i '' 's/CODE_SIGN_STYLE = Automatic;/CODE_SIGN_STYLE = Manual;/g' ios/Runner.xcodeproj/project.pbxproj
       - name: Build iOS
-        script: flutter build ios --release --no-codesign
+        script: |
+          flutter build ios --release --no-codesign || true
+          xcodebuild -workspace ios/Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -sdk iphoneos \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM="" \
+            -archivePath build/Runner.xcarchive \
+            archive
       - name: Create IPA
         script: |
-          APP_PATH=$(find build/ios -name "Runner.app" -type d | head -1)
           mkdir -p Payload
-          cp -r "$APP_PATH" Payload/
+          cp -r build/Runner.xcarchive/Products/Applications/Runner.app Payload/
           zip -r app.ipa Payload/
     artifacts:
       - app.ipa
