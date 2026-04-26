@@ -4,7 +4,9 @@ import 'dart:math';
 import 'dart:typed_data';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_compass/flutter_compass.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:image_gallery_saver/image_gallery_saver.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -39,20 +41,43 @@ class _CameraScreenState extends State<CameraScreen>
   int _timerCountdown = 0;
   Timer? _countdownTimer;
 
+  // Night mode
+  bool _nightMode = false;
+
+  // Notifications
+  final FlutterLocalNotificationsPlugin _notifications = FlutterLocalNotificationsPlugin();
+  bool _notificationsEnabled = false;
+  bool _moonRiseNotified = false;
+
   late AnimationController _pulseController;
+  late AnimationController _rotateController;
   late Animation<double> _pulseAnimation;
+  late Animation<double> _rotateAnimation;
   Timer? _moonUpdateTimer;
 
   @override
   void initState() {
     super.initState();
+    // Allow both orientations
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+
     _pulseController = AnimationController(
       duration: const Duration(seconds: 2),
       vsync: this,
     )..repeat(reverse: true);
-    _pulseAnimation = Tween<double>(begin: 0.95, end: 1.05).animate(
+    _rotateController = AnimationController(
+      duration: const Duration(seconds: 20),
+      vsync: this,
+    )..repeat();
+    _pulseAnimation = Tween<double>(begin: 0.92, end: 1.08).animate(
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
+    _rotateAnimation = Tween<double>(begin: 0, end: 2 * pi).animate(_rotateController);
+
     _initialize();
   }
 
@@ -60,6 +85,7 @@ class _CameraScreenState extends State<CameraScreen>
     await _requestPermissions();
     await _initCamera();
     await _getLocation();
+    await _initNotifications();
     _startCompass();
     _startMoonUpdates();
   }
@@ -69,7 +95,34 @@ class _CameraScreenState extends State<CameraScreen>
       Permission.camera,
       Permission.location,
       Permission.photos,
+      Permission.notification,
     ].request();
+  }
+
+  Future<void> _initNotifications() async {
+    const iosSettings = DarwinInitializationSettings(
+      requestAlertPermission: true,
+      requestBadgePermission: true,
+      requestSoundPermission: true,
+    );
+    const initSettings = InitializationSettings(iOS: iosSettings);
+    await _notifications.initialize(initSettings);
+    setState(() => _notificationsEnabled = true);
+  }
+
+  Future<void> _sendMoonRiseNotification() async {
+    const iosDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+    );
+    const details = NotificationDetails(iOS: iosDetails);
+    await _notifications.show(
+      0,
+      '🌙 Mesiac vychádza!',
+      'Teraz je ideálny čas na fotografovanie mesiaca!',
+      details,
+    );
   }
 
   void _startCompass() {
@@ -129,6 +182,7 @@ class _CameraScreenState extends State<CameraScreen>
   void _startMoonUpdates() {
     _moonUpdateTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       _updateMoonPosition();
+      _checkMoonRise();
     });
   }
 
@@ -140,6 +194,17 @@ class _CameraScreenState extends State<CameraScreen>
       DateTime.now(),
     );
     setState(() => _moonPosition = moon);
+  }
+
+  void _checkMoonRise() {
+    if (_moonPosition == null || !_notificationsEnabled) return;
+    // Check if moon just rose (altitude between 0 and 2 degrees)
+    if (_moonPosition!.altitude > 0 && _moonPosition!.altitude < 2 && !_moonRiseNotified) {
+      _moonRiseNotified = true;
+      _sendMoonRiseNotification();
+    } else if (_moonPosition!.altitude < 0) {
+      _moonRiseNotified = false;
+    }
   }
 
   Offset? _getMoonScreenOffset() {
@@ -311,11 +376,18 @@ class _CameraScreenState extends State<CameraScreen>
     return '--:--';
   }
 
+  // Night mode colors
+  Color get _uiColor => _nightMode ? Colors.red.shade800 : Colors.white;
+  Color get _uiColorDim => _nightMode ? Colors.red.shade900.withOpacity(0.7) : Colors.white70;
+  Color get _bgColor => _nightMode ? Colors.red.shade900.withOpacity(0.15) : Colors.white.withOpacity(0.1);
+
   @override
   void dispose() {
+    SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     _moonUpdateTimer?.cancel();
     _countdownTimer?.cancel();
     _pulseController.dispose();
+    _rotateController.dispose();
     _controller?.dispose();
     super.dispose();
   }
@@ -327,7 +399,7 @@ class _CameraScreenState extends State<CameraScreen>
       body: Stack(
         fit: StackFit.expand,
         children: [
-          // Camera preview - fixed stretch
+          // Camera preview
           if (_controller != null && _controller!.value.isInitialized)
             SizedBox.expand(
               child: FittedBox(
@@ -339,6 +411,9 @@ class _CameraScreenState extends State<CameraScreen>
                 ),
               ),
             ),
+          // Night mode red overlay
+          if (_nightMode)
+            Container(color: Colors.red.withOpacity(0.08)),
           _buildMoonOverlay(),
           _buildTopBar(),
           _buildSkyMap(),
@@ -357,35 +432,34 @@ class _CameraScreenState extends State<CameraScreen>
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           color: Colors.black.withOpacity(0.6),
-          border: Border.all(color: Colors.white, width: 3),
+          border: Border.all(color: _uiColor, width: 3),
         ),
         child: Center(
           child: Text('$_timerCountdown',
-            style: const TextStyle(color: Colors.white, fontSize: 60, fontWeight: FontWeight.bold)),
+            style: TextStyle(color: _uiColor, fontSize: 60, fontWeight: FontWeight.bold)),
         ),
       ),
     );
   }
 
-  // Mini sky map - bottom right
   Widget _buildSkyMap() {
     if (_moonPosition == null) return const SizedBox();
     return Positioned(
       right: 16,
       bottom: 140,
       child: Container(
-        width: 110,
-        height: 110,
+        width: 110, height: 110,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           color: Colors.black.withOpacity(0.65),
-          border: Border.all(color: Colors.white24, width: 1.5),
+          border: Border.all(color: _nightMode ? Colors.red.shade900 : Colors.white24, width: 1.5),
         ),
         child: CustomPaint(
           painter: SkyMapPainter(
             moonAzimuth: _moonPosition!.azimuth,
             moonAltitude: _moonPosition!.altitude,
             deviceAzimuth: _deviceAzimuth,
+            nightMode: _nightMode,
           ),
         ),
       ),
@@ -405,16 +479,24 @@ class _CameraScreenState extends State<CameraScreen>
         final moonX = cx + offset.dx * cx * 0.8;
         final moonY = cy + offset.dy * cy * 0.8;
         return AnimatedBuilder(
-          animation: _pulseAnimation,
+          animation: Listenable.merge([_pulseAnimation, _rotateAnimation]),
           builder: (_, __) => CustomPaint(
-            painter: MoonCirclePainter(center: Offset(moonX, moonY), radius: 60 * _pulseAnimation.value),
+            painter: MoonCirclePainter(
+              center: Offset(moonX, moonY),
+              radius: 60 * _pulseAnimation.value,
+              rotation: _rotateAnimation.value,
+              nightMode: _nightMode,
+            ),
             child: const SizedBox.expand(),
           ),
         );
       } else if (offset != null) {
         final angle = atan2(offset.dy, offset.dx);
         return CustomPaint(
-          painter: MoonArrowPainter(centerX: cx, centerY: cy, angle: angle, altitude: _moonPosition!.altitude),
+          painter: MoonArrowPainter(
+            centerX: cx, centerY: cy, angle: angle,
+            altitude: _moonPosition!.altitude, nightMode: _nightMode,
+          ),
           child: const SizedBox.expand(),
         );
       }
@@ -426,49 +508,59 @@ class _CameraScreenState extends State<CameraScreen>
     return Positioned(
       top: 0, left: 0, right: 0,
       child: SafeArea(
-        child: Container(
+        child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter, end: Alignment.bottomCenter,
-              colors: [Colors.black.withOpacity(0.8), Colors.transparent],
-            ),
-          ),
           child: Column(
             children: [
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text('🌙 MOON CAMERA',
-                    style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold, letterSpacing: 2)),
+                  Text('🌙 MOON CAMERA',
+                    style: TextStyle(color: _uiColor, fontSize: 16, fontWeight: FontWeight.bold, letterSpacing: 2)),
                   Row(children: [
                     if (_moonPosition != null)
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                         decoration: BoxDecoration(
-                          color: _moonPosition!.isAboveHorizon ? Colors.blue.withOpacity(0.3) : Colors.red.withOpacity(0.3),
+                          color: _moonPosition!.isAboveHorizon
+                              ? (_nightMode ? Colors.red.shade900.withOpacity(0.3) : Colors.blue.withOpacity(0.3))
+                              : Colors.red.withOpacity(0.3),
                           borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: _moonPosition!.isAboveHorizon ? Colors.blue : Colors.red),
+                          border: Border.all(color: _moonPosition!.isAboveHorizon
+                              ? (_nightMode ? Colors.red.shade700 : Colors.blue)
+                              : Colors.red),
                         ),
                         child: Text(
                           _moonPosition!.isAboveHorizon ? '↑ NAD' : '↓ POD',
-                          style: TextStyle(
-                            color: _moonPosition!.isAboveHorizon ? Colors.blue[200] : Colors.red[200],
-                            fontSize: 10, fontWeight: FontWeight.bold,
-                          ),
+                          style: TextStyle(color: _uiColorDim, fontSize: 10, fontWeight: FontWeight.bold),
                         ),
                       ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: 6),
+                    // Night mode toggle
+                    GestureDetector(
+                      onTap: () => setState(() => _nightMode = !_nightMode),
+                      child: Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: _nightMode ? Colors.red.shade900.withOpacity(0.4) : Colors.transparent,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: _nightMode ? Colors.red.shade700 : Colors.white38),
+                        ),
+                        child: Icon(Icons.bedtime, color: _nightMode ? Colors.red.shade300 : Colors.white, size: 18),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    // Controls toggle
                     GestureDetector(
                       onTap: () => setState(() => _showControls = !_showControls),
                       child: Container(
                         padding: const EdgeInsets.all(6),
                         decoration: BoxDecoration(
-                          color: _showControls ? Colors.white.withOpacity(0.3) : Colors.transparent,
+                          color: _showControls ? _uiColor.withOpacity(0.3) : Colors.transparent,
                           borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.white38),
+                          border: Border.all(color: _nightMode ? Colors.red.shade700 : Colors.white38),
                         ),
-                        child: const Icon(Icons.tune, color: Colors.white, size: 18),
+                        child: Icon(Icons.tune, color: _uiColor, size: 18),
                       ),
                     ),
                   ]),
@@ -490,10 +582,10 @@ class _CameraScreenState extends State<CameraScreen>
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Text(_getMoonPhase(), style: const TextStyle(color: Colors.white70, fontSize: 11)),
+                  Text(_getMoonPhase(), style: TextStyle(color: _uiColorDim, fontSize: 11)),
                   const SizedBox(width: 12),
                   Text('🌅 ${_getMoonRiseTime()}  🌇 ${_getMoonSetTime()}',
-                    style: const TextStyle(color: Colors.white70, fontSize: 11)),
+                    style: TextStyle(color: _uiColorDim, fontSize: 11)),
                 ],
               ),
             ],
@@ -507,14 +599,14 @@ class _CameraScreenState extends State<CameraScreen>
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.1),
+        color: _bgColor,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.white.withOpacity(0.2)),
+        border: Border.all(color: _uiColor.withOpacity(0.2)),
       ),
       child: RichText(
         text: TextSpan(children: [
-          TextSpan(text: '$label ', style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 10)),
-          TextSpan(text: value, style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+          TextSpan(text: '$label ', style: TextStyle(color: _uiColorDim, fontSize: 10)),
+          TextSpan(text: value, style: TextStyle(color: _uiColor, fontSize: 11, fontWeight: FontWeight.bold)),
         ]),
       ),
     );
@@ -526,43 +618,41 @@ class _CameraScreenState extends State<CameraScreen>
       child: Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.75),
+          color: _nightMode ? Colors.red.shade900.withOpacity(0.85) : Colors.black.withOpacity(0.75),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.white12),
+          border: Border.all(color: _nightMode ? Colors.red.shade800 : Colors.white12),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(children: [
-              const Icon(Icons.brightness_6, color: Colors.white70, size: 18),
+              Icon(Icons.brightness_6, color: _uiColorDim, size: 18),
               const SizedBox(width: 8),
-              const Text('Expozícia', style: TextStyle(color: Colors.white70, fontSize: 12)),
+              Text('Expozícia', style: TextStyle(color: _uiColorDim, fontSize: 12)),
               const Spacer(),
-              Text(_exposureOffset.toStringAsFixed(1), style: const TextStyle(color: Colors.white, fontSize: 12)),
+              Text(_exposureOffset.toStringAsFixed(1), style: TextStyle(color: _uiColor, fontSize: 12)),
             ]),
-            Slider(
-              value: _exposureOffset, min: _minExposure, max: _maxExposure, divisions: 16,
-              activeColor: Colors.white, inactiveColor: Colors.white24,
-              onChanged: _setExposure,
+            SliderTheme(
+              data: SliderThemeData(activeTrackColor: _uiColor, inactiveTrackColor: _uiColor.withOpacity(0.2), thumbColor: _uiColor),
+              child: Slider(value: _exposureOffset, min: _minExposure, max: _maxExposure, divisions: 16, onChanged: _setExposure),
             ),
             const SizedBox(height: 4),
             Row(children: [
-              const Icon(Icons.zoom_in, color: Colors.white70, size: 18),
+              Icon(Icons.zoom_in, color: _uiColorDim, size: 18),
               const SizedBox(width: 8),
-              const Text('Zoom', style: TextStyle(color: Colors.white70, fontSize: 12)),
+              Text('Zoom', style: TextStyle(color: _uiColorDim, fontSize: 12)),
               const Spacer(),
-              Text('${_zoomLevel.toStringAsFixed(1)}x', style: const TextStyle(color: Colors.white, fontSize: 12)),
+              Text('${_zoomLevel.toStringAsFixed(1)}x', style: TextStyle(color: _uiColor, fontSize: 12)),
             ]),
-            Slider(
-              value: _zoomLevel, min: 1.0, max: _maxZoom,
-              activeColor: Colors.white, inactiveColor: Colors.white24,
-              onChanged: _setZoom,
+            SliderTheme(
+              data: SliderThemeData(activeTrackColor: _uiColor, inactiveTrackColor: _uiColor.withOpacity(0.2), thumbColor: _uiColor),
+              child: Slider(value: _zoomLevel, min: 1.0, max: _maxZoom, onChanged: _setZoom),
             ),
             const SizedBox(height: 4),
             Row(children: [
-              const Icon(Icons.timer, color: Colors.white70, size: 18),
+              Icon(Icons.timer, color: _uiColorDim, size: 18),
               const SizedBox(width: 8),
-              const Text('Časovač', style: TextStyle(color: Colors.white70, fontSize: 12)),
+              Text('Časovač', style: TextStyle(color: _uiColorDim, fontSize: 12)),
               const Spacer(),
               ...[0, 3, 5, 10].map((s) => GestureDetector(
                 onTap: () => setState(() => _timerSeconds = s),
@@ -570,12 +660,12 @@ class _CameraScreenState extends State<CameraScreen>
                   margin: const EdgeInsets.only(left: 6),
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
-                    color: _timerSeconds == s ? Colors.white : Colors.white12,
+                    color: _timerSeconds == s ? _uiColor : _uiColor.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(s == 0 ? 'OFF' : '${s}s',
                     style: TextStyle(
-                      color: _timerSeconds == s ? Colors.black : Colors.white,
+                      color: _timerSeconds == s ? Colors.black : _uiColor,
                       fontSize: 11, fontWeight: FontWeight.bold,
                     )),
                 ),
@@ -592,14 +682,8 @@ class _CameraScreenState extends State<CameraScreen>
     return Positioned(
       bottom: 0, left: 0, right: 0,
       child: SafeArea(
-        child: Container(
+        child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 32),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.bottomCenter, end: Alignment.topCenter,
-              colors: [Colors.black.withOpacity(0.8), Colors.transparent],
-            ),
-          ),
           child: Column(
             children: [
               Text(
@@ -612,7 +696,7 @@ class _CameraScreenState extends State<CameraScreen>
                             : _statusMessage,
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  color: inFrame ? Colors.greenAccent : Colors.white70,
+                  color: inFrame ? Colors.greenAccent : _uiColorDim,
                   fontSize: 13, fontWeight: inFrame ? FontWeight.bold : FontWeight.normal,
                 ),
               ),
@@ -625,10 +709,10 @@ class _CameraScreenState extends State<CameraScreen>
                       margin: const EdgeInsets.only(right: 20),
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                       decoration: BoxDecoration(
-                        color: Colors.white12, borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: Colors.white24),
+                        color: _bgColor, borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: _uiColor.withOpacity(0.3)),
                       ),
-                      child: Text('⏱ ${_timerSeconds}s', style: const TextStyle(color: Colors.white, fontSize: 12)),
+                      child: Text('⏱ ${_timerSeconds}s', style: TextStyle(color: _uiColor, fontSize: 12)),
                     ),
                   GestureDetector(
                     onTap: _timerCountdown > 0 ? null : _startTimerAndShoot,
@@ -638,16 +722,16 @@ class _CameraScreenState extends State<CameraScreen>
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         color: _isTakingPhoto || _timerCountdown > 0
-                            ? Colors.white.withOpacity(0.3)
-                            : inFrame ? Colors.white : Colors.white.withOpacity(0.4),
-                        border: Border.all(color: inFrame ? Colors.white : Colors.white38, width: 3),
+                            ? _uiColor.withOpacity(0.3)
+                            : inFrame ? _uiColor : _uiColor.withOpacity(0.4),
+                        border: Border.all(color: inFrame ? _uiColor : _uiColor.withOpacity(0.4), width: 3),
                         boxShadow: inFrame
-                            ? [BoxShadow(color: Colors.white.withOpacity(0.4), blurRadius: 20, spreadRadius: 5)]
+                            ? [BoxShadow(color: _uiColor.withOpacity(0.4), blurRadius: 20, spreadRadius: 5)]
                             : null,
                       ),
                       child: _isTakingPhoto
-                          ? const Center(child: CircularProgressIndicator(color: Colors.white))
-                          : Icon(Icons.camera, size: 36, color: inFrame ? Colors.black : Colors.white54),
+                          ? Center(child: CircularProgressIndicator(color: _uiColor))
+                          : Icon(Icons.camera, size: 36, color: inFrame ? Colors.black : _uiColor.withOpacity(0.5)),
                     ),
                   ),
                   if (_zoomLevel > 1.0)
@@ -655,11 +739,11 @@ class _CameraScreenState extends State<CameraScreen>
                       margin: const EdgeInsets.only(left: 20),
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                       decoration: BoxDecoration(
-                        color: Colors.white12, borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: Colors.white24),
+                        color: _bgColor, borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: _uiColor.withOpacity(0.3)),
                       ),
                       child: Text('🔭 ${_zoomLevel.toStringAsFixed(1)}x',
-                        style: const TextStyle(color: Colors.white, fontSize: 12)),
+                        style: TextStyle(color: _uiColor, fontSize: 12)),
                     ),
                 ],
               ),
@@ -671,16 +755,17 @@ class _CameraScreenState extends State<CameraScreen>
   }
 }
 
-// Sky map painter
 class SkyMapPainter extends CustomPainter {
   final double moonAzimuth;
   final double moonAltitude;
   final double deviceAzimuth;
+  final bool nightMode;
 
   SkyMapPainter({
     required this.moonAzimuth,
     required this.moonAltitude,
     required this.deviceAzimuth,
+    this.nightMode = false,
   });
 
   @override
@@ -689,24 +774,17 @@ class SkyMapPainter extends CustomPainter {
     final cy = size.height / 2;
     final r = size.width / 2 - 4;
 
-    // Background
-    canvas.drawCircle(
-      Offset(cx, cy), r,
-      Paint()..color = const Color(0xFF0A0A2A),
-    );
-
-    // Horizon circle
+    final baseColor = nightMode ? Colors.red.shade900 : const Color(0xFF0A0A2A);
+    canvas.drawCircle(Offset(cx, cy), r, Paint()..color = baseColor);
     canvas.drawCircle(Offset(cx, cy), r * 0.95,
-      Paint()..color = Colors.white12..style = PaintingStyle.stroke..strokeWidth = 0.5);
+      Paint()..color = (nightMode ? Colors.red : Colors.white).withOpacity(0.12)..style = PaintingStyle.stroke..strokeWidth = 0.5);
 
-    // Altitude rings
     for (double alt in [30, 60]) {
       final ringR = r * (1 - alt / 90) * 0.95;
       canvas.drawCircle(Offset(cx, cy), ringR,
-        Paint()..color = Colors.white10..style = PaintingStyle.stroke..strokeWidth = 0.5);
+        Paint()..color = (nightMode ? Colors.red : Colors.white).withOpacity(0.1)..style = PaintingStyle.stroke..strokeWidth = 0.5);
     }
 
-    // Cardinal directions
     final dirPaint = TextPainter(textDirection: TextDirection.ltr);
     for (var entry in {'N': 0.0, 'E': 90.0, 'S': 180.0, 'W': 270.0}.entries) {
       final angle = (entry.value - deviceAzimuth) * pi / 180;
@@ -715,30 +793,28 @@ class SkyMapPainter extends CustomPainter {
       dirPaint.text = TextSpan(
         text: entry.key,
         style: TextStyle(
-          color: entry.key == 'N' ? Colors.redAccent : Colors.white38,
-          fontSize: 8,
-          fontWeight: FontWeight.bold,
+          color: entry.key == 'N'
+              ? (nightMode ? Colors.red.shade300 : Colors.redAccent)
+              : (nightMode ? Colors.red.shade700 : Colors.white38),
+          fontSize: 8, fontWeight: FontWeight.bold,
         ),
       );
       dirPaint.layout();
       dirPaint.paint(canvas, Offset(dx - dirPaint.width / 2, dy - dirPaint.height / 2));
     }
 
-    // Device direction indicator (FOV wedge)
+    // FOV wedge
     final fovAngle = 30.0 * pi / 180;
-    final deviceAngleRad = 0.0; // device is always "up" in the map
     final wedgePath = Path();
     wedgePath.moveTo(cx, cy);
     wedgePath.arcTo(
       Rect.fromCircle(center: Offset(cx, cy), radius: r * 0.9),
-      -pi / 2 - fovAngle / 2,
-      fovAngle,
-      false,
+      -pi / 2 - fovAngle / 2, fovAngle, false,
     );
     wedgePath.close();
-    canvas.drawPath(wedgePath, Paint()..color = Colors.white.withOpacity(0.08));
+    canvas.drawPath(wedgePath, Paint()..color = (nightMode ? Colors.red : Colors.white).withOpacity(0.08));
 
-    // Moon dot
+    // Moon
     if (moonAltitude > -10) {
       final moonAngle = (moonAzimuth - deviceAzimuth) * pi / 180;
       final altNorm = moonAltitude.clamp(-10.0, 90.0);
@@ -746,15 +822,11 @@ class SkyMapPainter extends CustomPainter {
       final mx = cx + sin(moonAngle) * moonR;
       final my = cy - cos(moonAngle) * moonR;
 
-      // Glow
       canvas.drawCircle(Offset(mx, my), 8,
         Paint()..color = Colors.yellow.withOpacity(0.2)..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4));
-
-      // Moon dot
       canvas.drawCircle(Offset(mx, my), 5,
         Paint()..color = moonAltitude > 0 ? Colors.yellow : Colors.yellow.withOpacity(0.4));
 
-      // Label
       final moonTp = TextPainter(
         text: const TextSpan(text: '🌙', style: TextStyle(fontSize: 8)),
         textDirection: TextDirection.ltr,
@@ -762,52 +834,86 @@ class SkyMapPainter extends CustomPainter {
       moonTp.paint(canvas, Offset(mx - moonTp.width / 2, my - moonTp.height - 3));
     }
 
-    // Center dot (you)
     canvas.drawCircle(Offset(cx, cy), 3,
-      Paint()..color = Colors.white54..style = PaintingStyle.fill);
+      Paint()..color = (nightMode ? Colors.red.shade400 : Colors.white54)..style = PaintingStyle.fill);
 
-    // "SKY" label
     final labelTp = TextPainter(
-      text: const TextSpan(text: 'OBLOHA', style: TextStyle(color: Colors.white30, fontSize: 7, letterSpacing: 1)),
+      text: TextSpan(text: 'OBLOHA',
+        style: TextStyle(color: (nightMode ? Colors.red.shade800 : Colors.white30), fontSize: 7, letterSpacing: 1)),
       textDirection: TextDirection.ltr,
     )..layout();
     labelTp.paint(canvas, Offset(cx - labelTp.width / 2, size.height - 12));
   }
 
   @override
-  bool shouldRepaint(SkyMapPainter old) =>
-      old.moonAzimuth != moonAzimuth ||
-      old.moonAltitude != moonAltitude ||
-      old.deviceAzimuth != deviceAzimuth;
+  bool shouldRepaint(SkyMapPainter old) => true;
 }
 
 class MoonCirclePainter extends CustomPainter {
   final Offset center;
   final double radius;
-  MoonCirclePainter({required this.center, required this.radius});
+  final double rotation;
+  final bool nightMode;
+
+  MoonCirclePainter({
+    required this.center,
+    required this.radius,
+    this.rotation = 0,
+    this.nightMode = false,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
+    final color = nightMode ? Colors.red.shade400 : Colors.white;
+
+    // Outer glow
     canvas.drawCircle(center, radius, Paint()
-      ..color = Colors.white.withOpacity(0.15)
+      ..color = color.withOpacity(0.12)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 20
       ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 15));
-    canvas.drawCircle(center, radius, Paint()
-      ..color = Colors.white.withOpacity(0.8)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.5);
 
-    final lp = Paint()..color = Colors.white.withOpacity(0.5)..strokeWidth = 1;
+    // Main circle
+    canvas.drawCircle(center, radius, Paint()
+      ..color = color.withOpacity(0.85)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2);
+
+    // Rotating dashed outer ring
+    canvas.save();
+    canvas.translate(center.dx, center.dy);
+    canvas.rotate(rotation);
+    final dashPaint = Paint()
+      ..color = color.withOpacity(0.4)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
+    const dashCount = 24;
+    for (int i = 0; i < dashCount; i++) {
+      final angle = (i / dashCount) * 2 * pi;
+      final startR = radius + 8;
+      final endR = radius + 16;
+      canvas.drawLine(
+        Offset(cos(angle) * startR, sin(angle) * startR),
+        Offset(cos(angle) * endR, sin(angle) * endR),
+        dashPaint,
+      );
+    }
+    canvas.restore();
+
+    // Crosshair
+    final lp = Paint()..color = color.withOpacity(0.5)..strokeWidth = 1;
     canvas.drawLine(Offset(center.dx, center.dy - radius - 10), Offset(center.dx, center.dy - radius + 10), lp);
     canvas.drawLine(Offset(center.dx, center.dy + radius - 10), Offset(center.dx, center.dy + radius + 10), lp);
     canvas.drawLine(Offset(center.dx - radius - 10, center.dy), Offset(center.dx - radius + 10, center.dy), lp);
     canvas.drawLine(Offset(center.dx + radius - 10, center.dy), Offset(center.dx + radius + 10, center.dy), lp);
-    canvas.drawCircle(center, 3, Paint()..color = Colors.white.withOpacity(0.6)..style = PaintingStyle.fill);
 
+    // Center dot
+    canvas.drawCircle(center, 3, Paint()..color = color.withOpacity(0.6)..style = PaintingStyle.fill);
+
+    // Label
     final tp = TextPainter(
       text: TextSpan(text: '🌙 MESIAC',
-        style: TextStyle(color: Colors.white.withOpacity(0.9), fontSize: 12, fontWeight: FontWeight.bold,
+        style: TextStyle(color: color.withOpacity(0.9), fontSize: 12, fontWeight: FontWeight.bold,
           shadows: [Shadow(color: Colors.black, blurRadius: 4)])),
       textDirection: TextDirection.ltr,
     )..layout();
@@ -815,28 +921,35 @@ class MoonCirclePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(MoonCirclePainter old) => old.center != center || old.radius != radius;
+  bool shouldRepaint(MoonCirclePainter old) => old.radius != radius || old.rotation != rotation;
 }
 
 class MoonArrowPainter extends CustomPainter {
   final double centerX, centerY, angle, altitude;
-  MoonArrowPainter({required this.centerX, required this.centerY, required this.angle, required this.altitude});
+  final bool nightMode;
+
+  MoonArrowPainter({
+    required this.centerX, required this.centerY,
+    required this.angle, required this.altitude,
+    this.nightMode = false,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
+    final color = nightMode ? Colors.red.shade400 : Colors.white;
     final ax = centerX + cos(angle) * 120.0;
     final ay = centerY + sin(angle) * 120.0;
 
     canvas.drawCircle(Offset(ax, ay), 36, Paint()..color = Colors.black.withOpacity(0.4));
     canvas.drawCircle(Offset(ax, ay), 36, Paint()
-      ..color = Colors.white.withOpacity(0.6)..style = PaintingStyle.stroke..strokeWidth = 1.5);
+      ..color = color.withOpacity(0.6)..style = PaintingStyle.stroke..strokeWidth = 1.5);
 
     canvas.save();
     canvas.translate(ax, ay);
     canvas.rotate(angle);
     canvas.drawPath(
       Path()..moveTo(20, 0)..lineTo(-10, -10)..lineTo(-5, 0)..lineTo(-10, 10)..close(),
-      Paint()..color = Colors.white..style = PaintingStyle.fill,
+      Paint()..color = color..style = PaintingStyle.fill,
     );
     canvas.restore();
 
@@ -848,7 +961,7 @@ class MoonArrowPainter extends CustomPainter {
 
     final altTp = TextPainter(
       text: TextSpan(text: '${altitude.toStringAsFixed(0)}°',
-        style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+        style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold)),
       textDirection: TextDirection.ltr,
     )..layout();
     altTp.paint(canvas, Offset(ax - altTp.width / 2, ay + 14));

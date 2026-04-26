@@ -15,6 +15,7 @@ dependencies:
   vector_math: ^2.1.4
   flutter_compass: ^0.8.1
   image_gallery_saver: ^2.0.3
+  flutter_local_notifications: ^21.0.0
 
 dev_dependencies:
   flutter_test:
