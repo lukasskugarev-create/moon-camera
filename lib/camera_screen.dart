@@ -100,22 +100,26 @@ class _CameraScreenState extends State<CameraScreen>
   }
 
   Future<void> _initNotifications() async {
-    const iosSettings = DarwinInitializationSettings(
-      requestAlertPermission: true,
-      requestBadgePermission: true,
-      requestSoundPermission: true,
-    );
+    const iosSettings = DarwinInitializationSettings();
+    const initSettings = InitializationSettings(iOS: iosSettings);
+    await _notifications.initialize(initSettings);
+    setState(() => _notificationsEnabled = true);
+  }
     const initSettings = InitializationSettings(iOS: iosSettings);
     await _notifications.initialize(initSettings);
     setState(() => _notificationsEnabled = true);
   }
 
   Future<void> _sendMoonRiseNotification() async {
-    const iosDetails = DarwinNotificationDetails(
-      presentAlert: true,
-      presentBadge: true,
-      presentSound: true,
+    const iosDetails = DarwinNotificationDetails();
+    const details = NotificationDetails(iOS: iosDetails);
+    await _notifications.show(
+      0,
+      '🌙 Mesiac vychádza!',
+      'Teraz je ideálny čas na fotografovanie mesiaca!',
+      details,
     );
+  }
     const details = NotificationDetails(iOS: iosDetails);
     await _notifications.show(
       0,

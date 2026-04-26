@@ -9,22 +9,12 @@ workflows:
       - name: Get Flutter packages
         script: flutter pub get
       - name: Build iOS
-        script: |
-          flutter build ios --release --no-codesign || true
-          xcodebuild -workspace ios/Runner.xcworkspace \
-            -scheme Runner \
-            -configuration Release \
-            -sdk iphoneos \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            DEVELOPMENT_TEAM="" \
-            -archivePath build/Runner.xcarchive \
-            archive
+        script: flutter build ios --release --no-codesign
       - name: Create IPA
         script: |
+          APP_PATH=$(find build/ios -name "Runner.app" -type d | head -1)
           mkdir -p Payload
-          cp -r build/Runner.xcarchive/Products/Applications/Runner.app Payload/
+          cp -r "$APP_PATH" Payload/
           zip -r app.ipa Payload/
     artifacts:
       - app.ipa
