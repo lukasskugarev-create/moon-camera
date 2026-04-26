@@ -22,6 +22,7 @@ class _CameraScreenState extends State<CameraScreen>
     with TickerProviderStateMixin {
   CameraController? _controller;
   List<CameraDescription>? _cameras;
+  int _selectedCameraIndex = 0;
   MoonPosition? _moonPosition;
   Position? _devicePosition;
   double _deviceAzimuth = 0;
@@ -46,6 +47,18 @@ class _CameraScreenState extends State<CameraScreen>
   late Animation<double> _pulseAnimation;
   late Animation<double> _rotateAnimation;
   Timer? _moonUpdateTimer;
+
+  // Lens labels based on camera count
+  List<String> get _lensLabels {
+    if (_cameras == null) return [];
+    switch (_cameras!.length) {
+      case 1: return ['1x'];
+      case 2: return ['1x', '2x'];
+      case 3: return ['0.5x', '1x', '2x'];
+      case 4: return ['0.5x', '1x', '2x', '3x'];
+      default: return List.generate(_cameras!.length, (i) => '${i + 1}x');
+    }
+  }
 
   @override
   void initState() {
@@ -82,21 +95,38 @@ class _CameraScreenState extends State<CameraScreen>
     });
   }
 
-  Future<void> _initCamera() async {
+  Future<void> _initCamera({int index = 0}) async {
     try {
       _cameras = await availableCameras();
       if (_cameras == null || _cameras!.isEmpty) return;
-      _controller = CameraController(_cameras!.first, ResolutionPreset.max, enableAudio: false, imageFormatGroup: ImageFormatGroup.jpeg);
+
+      // Find back cameras only
+      final backCameras = _cameras!.where((c) => c.lensDirection == CameraLensDirection.back).toList();
+      if (backCameras.isEmpty) return;
+
+      // Replace _cameras with only back cameras
+      _cameras = backCameras;
+      final safeIndex = index.clamp(0, _cameras!.length - 1);
+      _selectedCameraIndex = safeIndex;
+
+      await _controller?.dispose();
+      _controller = CameraController(_cameras![safeIndex], ResolutionPreset.max, enableAudio: false, imageFormatGroup: ImageFormatGroup.jpeg);
       await _controller!.initialize();
       await _controller!.setExposureMode(ExposureMode.auto);
       await _controller!.setFocusMode(FocusMode.auto);
       _minExposure = await _controller!.getMinExposureOffset();
       _maxExposure = await _controller!.getMaxExposureOffset();
       _maxZoom = await _controller!.getMaxZoomLevel();
+      _zoomLevel = 1.0;
       if (mounted) setState(() {});
     } catch (e) {
       setState(() => _statusMessage = 'Chyba kamery: $e');
     }
+  }
+
+  Future<void> _switchCamera(int index) async {
+    if (_cameras == null || index >= _cameras!.length) return;
+    await _initCamera(index: index);
   }
 
   Future<void> _getLocation() async {
@@ -300,10 +330,56 @@ class _CameraScreenState extends State<CameraScreen>
           _buildMoonOverlay(),
           _buildTopBar(),
           _buildSkyMap(),
+          _buildLensSwitcher(),
           if (_showControls) _buildControlsPanel(),
           _buildBottomControls(),
           if (_timerCountdown > 0) _buildCountdown(),
         ],
+      ),
+    );
+  }
+
+  Widget _buildLensSwitcher() {
+    if (_cameras == null || _cameras!.length <= 1) return const SizedBox();
+    final labels = _lensLabels;
+    return Positioned(
+      bottom: 140,
+      left: 0, right: 0,
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.5),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: Colors.white12),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: List.generate(_cameras!.length, (i) {
+              final isSelected = i == _selectedCameraIndex;
+              return GestureDetector(
+                onTap: () => _switchCamera(i),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  margin: const EdgeInsets.symmetric(horizontal: 3),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: isSelected ? _uiColor : Colors.transparent,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Text(
+                    labels[i],
+                    style: TextStyle(
+                      color: isSelected ? Colors.black : _uiColor,
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              );
+            }),
+          ),
+        ),
       ),
     );
   }
@@ -321,7 +397,7 @@ class _CameraScreenState extends State<CameraScreen>
   Widget _buildSkyMap() {
     if (_moonPosition == null) return const SizedBox();
     return Positioned(
-      right: 16, bottom: 140,
+      right: 16, bottom: 190,
       child: Container(
         width: 110, height: 110,
         decoration: BoxDecoration(
@@ -341,11 +417,9 @@ class _CameraScreenState extends State<CameraScreen>
     final inFrame = _isMoonInFrame();
     final offset = _getMoonScreenOffset();
     return LayoutBuilder(builder: (context, constraints) {
-      final cx = constraints.maxWidth / 2;
-      final cy = constraints.maxHeight / 2;
+      final cx = constraints.maxWidth / 2, cy = constraints.maxHeight / 2;
       if (inFrame && offset != null) {
-        final moonX = cx + offset.dx * cx * 0.8;
-        final moonY = cy + offset.dy * cy * 0.8;
+        final moonX = cx + offset.dx * cx * 0.8, moonY = cy + offset.dy * cy * 0.8;
         return AnimatedBuilder(
           animation: Listenable.merge([_pulseAnimation, _rotateAnimation]),
           builder: (_, __) => CustomPaint(
