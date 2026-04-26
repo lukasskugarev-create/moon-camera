@@ -9,7 +9,8 @@ workflows:
       - name: Get Flutter packages
         script: flutter pub get
       - name: Build iOS
-        script: flutter build ios --release --no-codesign
+        script: |
+          flutter build ios --release --simulator
       - name: Create IPA
         script: |
           APP_PATH=$(find build/ios -name "Runner.app" -type d | head -1)
