@@ -72,5 +72,9 @@
 	<string>Potrebujeme polohu na výpočet pozície mesiaca</string>
 	<key>NSLocationAlwaysUsageDescription</key>
 	<string>Potrebujeme polohu na výpočet pozície mesiaca</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Moon Camera potrebuje prístup do galérie na uloženie fotiek mesiaca</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Moon Camera potrebuje prístup do galérie na uloženie fotiek mesiaca</string>
 </dict>
 </plist>
