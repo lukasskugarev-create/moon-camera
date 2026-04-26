@@ -328,7 +328,16 @@ class _CameraScreenState extends State<CameraScreen>
         fit: StackFit.expand,
         children: [
           if (_controller != null && _controller!.value.isInitialized)
-            CameraPreview(_controller!),
+          SizedBox.expand(
+            child: FittedBox(
+              fit: BoxFit.cover,
+              child: SizedBox(
+                width: _controller!.value.previewSize!.height,
+                height: _controller!.value.previewSize!.width,
+                child: CameraPreview(_controller!),
+              ),
+            ),
+          ),         
           _buildMoonOverlay(),
           _buildTopBar(),
           if (_showControls) _buildControlsPanel(),
