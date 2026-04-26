@@ -11,6 +11,7 @@
         "flutter",
         "flutter_compass",
         "geolocator",
+        "image_gallery_saver",
         "permission_handler",
         "vector_math"
       ],
@@ -42,6 +43,13 @@
         "stream_channel",
         "test_api",
         "vector_math"
+      ]
+    },
+    {
+      "name": "image_gallery_saver",
+      "version": "2.0.3",
+      "dependencies": [
+        "flutter"
       ]
     },
     {

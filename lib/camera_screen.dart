@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_compass/flutter_compass.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:image_gallery_saver/image_gallery_saver.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'moon_calculator.dart';
 
@@ -26,7 +28,6 @@ class _CameraScreenState extends State<CameraScreen>
   bool _isTakingPhoto = false;
   String _statusMessage = 'Inicializujem...';
 
-  // Exposure & zoom
   double _exposureOffset = 0.0;
   double _minExposure = -4.0;
   double _maxExposure = 4.0;
@@ -34,7 +35,6 @@ class _CameraScreenState extends State<CameraScreen>
   double _maxZoom = 8.0;
   bool _showControls = false;
 
-  // Timer
   int _timerSeconds = 0;
   int _timerCountdown = 0;
   Timer? _countdownTimer;
@@ -206,6 +206,32 @@ class _CameraScreenState extends State<CameraScreen>
     }
   }
 
+  Future<void> _saveToGallery(String path) async {
+    try {
+      final Uint8List bytes = await File(path).readAsBytes();
+      final result = await ImageGallerySaver.saveImage(
+        bytes,
+        quality: 100,
+        name: 'moon_${DateTime.now().millisecondsSinceEpoch}',
+      );
+      if (mounted) {
+        final success = result['isSuccess'] == true;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(success ? '✅ Fotka uložená do galérie!' : '❌ Nepodarilo sa uložiť'),
+            backgroundColor: success ? Colors.green : Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('❌ Chyba: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
   void _showPhotoPreview(String path) {
     showDialog(
       context: context,
@@ -231,12 +257,7 @@ class _CameraScreenState extends State<CameraScreen>
                   TextButton.icon(
                     onPressed: () {
                       Navigator.pop(ctx);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('✅ Fotka uložená!'),
-                          backgroundColor: Colors.green,
-                        ),
-                      );
+                      _saveToGallery(path);
                     },
                     icon: const Icon(Icons.save, color: Colors.green),
                     label: const Text('Uložiť', style: TextStyle(color: Colors.green)),
@@ -272,9 +293,7 @@ class _CameraScreenState extends State<CameraScreen>
       final t2 = DateTime(now.year, now.month, now.day, h + 1 < 24 ? h + 1 : 23, 59);
       final m1 = MoonCalculator.calculate(_devicePosition!.latitude, _devicePosition!.longitude, t1);
       final m2 = MoonCalculator.calculate(_devicePosition!.latitude, _devicePosition!.longitude, t2);
-      if (m1.altitude <= 0 && m2.altitude > 0) {
-        return '${h.toString().padLeft(2, '0')}:00';
-      }
+      if (m1.altitude <= 0 && m2.altitude > 0) return '${h.toString().padLeft(2, '0')}:00';
     }
     return '--:--';
   }
@@ -287,9 +306,7 @@ class _CameraScreenState extends State<CameraScreen>
       final t2 = DateTime(now.year, now.month, now.day, h + 1 < 24 ? h + 1 : 23, 59);
       final m1 = MoonCalculator.calculate(_devicePosition!.latitude, _devicePosition!.longitude, t1);
       final m2 = MoonCalculator.calculate(_devicePosition!.latitude, _devicePosition!.longitude, t2);
-      if (m1.altitude > 0 && m2.altitude <= 0) {
-        return '${h.toString().padLeft(2, '0')}:00';
-      }
+      if (m1.altitude > 0 && m2.altitude <= 0) return '${h.toString().padLeft(2, '0')}:00';
     }
     return '--:--';
   }
@@ -325,18 +342,15 @@ class _CameraScreenState extends State<CameraScreen>
   Widget _buildCountdown() {
     return Center(
       child: Container(
-        width: 120,
-        height: 120,
+        width: 120, height: 120,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           color: Colors.black.withOpacity(0.6),
           border: Border.all(color: Colors.white, width: 3),
         ),
         child: Center(
-          child: Text(
-            '$_timerCountdown',
-            style: const TextStyle(color: Colors.white, fontSize: 60, fontWeight: FontWeight.bold),
-          ),
+          child: Text('$_timerCountdown',
+            style: const TextStyle(color: Colors.white, fontSize: 60, fontWeight: FontWeight.bold)),
         ),
       ),
     );
@@ -348,10 +362,8 @@ class _CameraScreenState extends State<CameraScreen>
     final offset = _getMoonScreenOffset();
 
     return LayoutBuilder(builder: (context, constraints) {
-      final w = constraints.maxWidth;
-      final h = constraints.maxHeight;
-      final cx = w / 2;
-      final cy = h / 2;
+      final cx = constraints.maxWidth / 2;
+      final cy = constraints.maxHeight / 2;
 
       if (inFrame && offset != null) {
         final moonX = cx + offset.dx * cx * 0.8;
@@ -382,8 +394,7 @@ class _CameraScreenState extends State<CameraScreen>
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           decoration: BoxDecoration(
             gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
+              begin: Alignment.topCenter, end: Alignment.bottomCenter,
               colors: [Colors.black.withOpacity(0.8), Colors.transparent],
             ),
           ),
@@ -394,39 +405,37 @@ class _CameraScreenState extends State<CameraScreen>
                 children: [
                   const Text('🌙 MOON CAMERA',
                     style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold, letterSpacing: 2)),
-                  Row(
-                    children: [
-                      if (_moonPosition != null)
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: _moonPosition!.isAboveHorizon ? Colors.blue.withOpacity(0.3) : Colors.red.withOpacity(0.3),
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(color: _moonPosition!.isAboveHorizon ? Colors.blue : Colors.red),
-                          ),
-                          child: Text(
-                            _moonPosition!.isAboveHorizon ? '↑ NAD' : '↓ POD',
-                            style: TextStyle(
-                              color: _moonPosition!.isAboveHorizon ? Colors.blue[200] : Colors.red[200],
-                              fontSize: 10, fontWeight: FontWeight.bold,
-                            ),
-                          ),
+                  Row(children: [
+                    if (_moonPosition != null)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: _moonPosition!.isAboveHorizon ? Colors.blue.withOpacity(0.3) : Colors.red.withOpacity(0.3),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: _moonPosition!.isAboveHorizon ? Colors.blue : Colors.red),
                         ),
-                      const SizedBox(width: 8),
-                      GestureDetector(
-                        onTap: () => setState(() => _showControls = !_showControls),
-                        child: Container(
-                          padding: const EdgeInsets.all(6),
-                          decoration: BoxDecoration(
-                            color: _showControls ? Colors.white.withOpacity(0.3) : Colors.transparent,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: Colors.white38),
+                        child: Text(
+                          _moonPosition!.isAboveHorizon ? '↑ NAD' : '↓ POD',
+                          style: TextStyle(
+                            color: _moonPosition!.isAboveHorizon ? Colors.blue[200] : Colors.red[200],
+                            fontSize: 10, fontWeight: FontWeight.bold,
                           ),
-                          child: const Icon(Icons.tune, color: Colors.white, size: 18),
                         ),
                       ),
-                    ],
-                  ),
+                    const SizedBox(width: 8),
+                    GestureDetector(
+                      onTap: () => setState(() => _showControls = !_showControls),
+                      child: Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: _showControls ? Colors.white.withOpacity(0.3) : Colors.transparent,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.white38),
+                        ),
+                        child: const Icon(Icons.tune, color: Colors.white, size: 18),
+                      ),
+                    ),
+                  ]),
                 ],
               ),
               const SizedBox(height: 6),
@@ -496,8 +505,7 @@ class _CameraScreenState extends State<CameraScreen>
               Text(_exposureOffset.toStringAsFixed(1), style: const TextStyle(color: Colors.white, fontSize: 12)),
             ]),
             Slider(
-              value: _exposureOffset,
-              min: _minExposure, max: _maxExposure, divisions: 16,
+              value: _exposureOffset, min: _minExposure, max: _maxExposure, divisions: 16,
               activeColor: Colors.white, inactiveColor: Colors.white24,
               onChanged: _setExposure,
             ),
@@ -510,8 +518,7 @@ class _CameraScreenState extends State<CameraScreen>
               Text('${_zoomLevel.toStringAsFixed(1)}x', style: const TextStyle(color: Colors.white, fontSize: 12)),
             ]),
             Slider(
-              value: _zoomLevel,
-              min: 1.0, max: _maxZoom,
+              value: _zoomLevel, min: 1.0, max: _maxZoom,
               activeColor: Colors.white, inactiveColor: Colors.white24,
               onChanged: _setZoom,
             ),
@@ -530,13 +537,11 @@ class _CameraScreenState extends State<CameraScreen>
                     color: _timerSeconds == s ? Colors.white : Colors.white12,
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Text(
-                    s == 0 ? 'OFF' : '${s}s',
+                  child: Text(s == 0 ? 'OFF' : '${s}s',
                     style: TextStyle(
                       color: _timerSeconds == s ? Colors.black : Colors.white,
                       fontSize: 11, fontWeight: FontWeight.bold,
-                    ),
-                  ),
+                    )),
                 ),
               )),
             ]),
@@ -572,8 +577,7 @@ class _CameraScreenState extends State<CameraScreen>
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: inFrame ? Colors.greenAccent : Colors.white70,
-                  fontSize: 13,
-                  fontWeight: inFrame ? FontWeight.bold : FontWeight.normal,
+                  fontSize: 13, fontWeight: inFrame ? FontWeight.bold : FontWeight.normal,
                 ),
               ),
               const SizedBox(height: 16),

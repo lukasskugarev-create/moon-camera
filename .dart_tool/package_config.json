@@ -158,6 +158,12 @@
       "languageVersion": "3.5"
     },
     {
+      "name": "image_gallery_saver",
+      "rootUri": "file:///C:/Users/skugy/AppData/Local/Pub/Cache/hosted/pub.dev/image_gallery_saver-2.0.3",
+      "packageUri": "lib/",
+      "languageVersion": "2.12"
+    },
+    {
       "name": "leak_tracker",
       "rootUri": "file:///C:/Users/skugy/AppData/Local/Pub/Cache/hosted/pub.dev/leak_tracker-11.0.2",
       "packageUri": "lib/",
