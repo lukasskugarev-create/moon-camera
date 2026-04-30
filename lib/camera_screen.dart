@@ -30,20 +30,19 @@ class _CameraScreenState extends State<CameraScreen>
   SunPosition? _sunPosition;
   Position? _devicePosition;
 
-  // Raw values
   double _rawAzimuth = 0;
   double _rawPitch = 0;
-
-  // Smoothed values used for overlay
   double _deviceAzimuth = 0;
   double _devicePitch = 0;
-
-  // Smoothing factor: lower = smoother but slower, higher = faster but jittery
   final double _smoothFactor = 0.12;
+
+  // Hysteresis — tracks if target was in frame last frame
+  bool _wasInFrame = false;
+  static const double _enterThreshold = 0.75;
+  static const double _exitThreshold = 1.1;
 
   bool _isTakingPhoto = false;
   String _statusMessage = 'Inicializujem...';
-
   bool _sunMode = false;
 
   double _exposureOffset = 0.0;
@@ -134,7 +133,6 @@ class _CameraScreenState extends State<CameraScreen>
     await [Permission.camera, Permission.location, Permission.photos].request();
   }
 
-  // Smooth angle difference (handles 0/360 wrap)
   double _angleDiff(double target, double current) {
     double diff = target - current;
     while (diff > 180) diff -= 360;
@@ -146,7 +144,6 @@ class _CameraScreenState extends State<CameraScreen>
     FlutterCompass.events?.listen((event) {
       if (mounted && event.heading != null) {
         _rawAzimuth = event.heading!;
-        // Smooth azimuth
         final diff = _angleDiff(_rawAzimuth, _deviceAzimuth);
         setState(() {
           _deviceAzimuth = _deviceAzimuth + _smoothFactor * diff;
@@ -161,7 +158,6 @@ class _CameraScreenState extends State<CameraScreen>
     _accelerometerSubscription = accelerometerEventStream().listen((AccelerometerEvent event) {
       if (!mounted) return;
       _rawPitch = atan2(-event.z, sqrt(event.x * event.x + event.y * event.y)) * 180 / pi;
-      // Smooth pitch
       setState(() {
         _devicePitch = _devicePitch + _smoothFactor * (_rawPitch - _devicePitch);
       });
@@ -209,7 +205,7 @@ class _CameraScreenState extends State<CameraScreen>
   Future<void> _switchCamera(int index) async {
     if (_cameras == null || index >= _cameras!.length) return;
     if (index == _selectedCameraIndex || _isSwitchingCamera) return;
-    setState(() { _isSwitchingCamera = true; _lockedPosition = null; });
+    setState(() { _isSwitchingCamera = true; _lockedPosition = null; _wasInFrame = false; });
     await _initCamera(index: index);
     if (mounted) setState(() => _isSwitchingCamera = false);
   }
@@ -241,7 +237,7 @@ class _CameraScreenState extends State<CameraScreen>
   }
 
   void _toggleMode() {
-    setState(() { _sunMode = !_sunMode; _lockedPosition = null; });
+    setState(() { _sunMode = !_sunMode; _lockedPosition = null; _wasInFrame = false; });
     HapticFeedback.lightImpact();
   }
 
@@ -258,7 +254,12 @@ class _CameraScreenState extends State<CameraScreen>
     if (_isLocked) return true;
     final offset = _getScreenOffset();
     if (offset == null) return false;
-    return offset.dx.abs() < 0.85 && offset.dy.abs() < 0.85;
+
+    // Hysteresis: use larger threshold to exit than to enter
+    final threshold = _wasInFrame ? _exitThreshold : _enterThreshold;
+    final inFrame = offset.dx.abs() < threshold && offset.dy.abs() < threshold;
+    _wasInFrame = inFrame;
+    return inFrame;
   }
 
   void _onTapScreen(TapUpDetails details) {
@@ -278,7 +279,7 @@ class _CameraScreenState extends State<CameraScreen>
   }
 
   void _unlockPosition() {
-    setState(() => _lockedPosition = null);
+    setState(() { _lockedPosition = null; _wasInFrame = false; });
     _lockAnimController.reverse();
     HapticFeedback.lightImpact();
   }
@@ -594,7 +595,7 @@ class _CameraScreenState extends State<CameraScreen>
 
       final offset = _getScreenOffset();
       if (offset == null) return const SizedBox();
-      final inFrame = offset.dx.abs() < 0.85 && offset.dy.abs() < 0.85;
+      final inFrame = _isTargetInFrame();
 
       if (inFrame) {
         final tx = cx + offset.dx * cx * 0.8;
@@ -876,7 +877,7 @@ class SkyMapPainter extends CustomPainter {
       canvas.drawCircle(Offset(sx, sy), sunMode ? 5 : 3, Paint()..color = sunAltitude > 0 ? Colors.yellow : Colors.yellow.withOpacity(0.4));
     }
     canvas.drawCircle(Offset(cx, cy), 3, Paint()..color = Colors.white54..style = PaintingStyle.fill);
-    final labelTp = TextPainter(text: TextSpan(text: 'OBLOHA', style: const TextStyle(color: Colors.white30, fontSize: 7, letterSpacing: 1)), textDirection: TextDirection.ltr)..layout();
+    final labelTp = TextPainter(text: const TextSpan(text: 'OBLOHA', style: TextStyle(color: Colors.white30, fontSize: 7, letterSpacing: 1)), textDirection: TextDirection.ltr)..layout();
     labelTp.paint(canvas, Offset(cx - labelTp.width / 2, size.height - 12));
   }
 
