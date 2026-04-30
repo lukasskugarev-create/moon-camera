@@ -28,7 +28,7 @@ class _CameraScreenState extends State<CameraScreen>
   MoonPosition? _moonPosition;
   Position? _devicePosition;
   double _deviceAzimuth = 0;
-  double _devicePitch = 0; // degrees above horizon (positive = phone tilted up)
+  double _devicePitch = 0;
   bool _isTakingPhoto = false;
   String _statusMessage = 'Inicializujem...';
 
@@ -44,12 +44,18 @@ class _CameraScreenState extends State<CameraScreen>
   int _timerCountdown = 0;
   Timer? _countdownTimer;
 
+  // Tap-to-lock
+  Offset? _lockedMoonPosition; // screen position where user tapped
+  bool get _isLocked => _lockedMoonPosition != null;
+
   StreamSubscription? _accelerometerSubscription;
 
   late AnimationController _pulseController;
   late AnimationController _rotateController;
+  late AnimationController _lockAnimController;
   late Animation<double> _pulseAnimation;
   late Animation<double> _rotateAnimation;
+  late Animation<double> _lockAnimation;
   Timer? _moonUpdateTimer;
 
   List<String> get _lensLabels {
@@ -73,8 +79,10 @@ class _CameraScreenState extends State<CameraScreen>
     ]);
     _pulseController = AnimationController(duration: const Duration(seconds: 2), vsync: this)..repeat(reverse: true);
     _rotateController = AnimationController(duration: const Duration(seconds: 20), vsync: this)..repeat();
+    _lockAnimController = AnimationController(duration: const Duration(milliseconds: 400), vsync: this);
     _pulseAnimation = Tween<double>(begin: 0.92, end: 1.08).animate(CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut));
     _rotateAnimation = Tween<double>(begin: 0, end: 2 * pi).animate(_rotateController);
+    _lockAnimation = Tween<double>(begin: 0, end: 1).animate(CurvedAnimation(parent: _lockAnimController, curve: Curves.elasticOut));
     _initialize();
   }
 
@@ -100,12 +108,8 @@ class _CameraScreenState extends State<CameraScreen>
   }
 
   void _startAccelerometer() {
-    // Use accelerometer to get device pitch (tilt angle)
     _accelerometerSubscription = accelerometerEventStream().listen((AccelerometerEvent event) {
       if (!mounted) return;
-      // event.y is gravity component — when phone is flat: y≈9.8, when vertical: y≈0
-      // event.z is front-back tilt
-      // Calculate pitch angle in degrees
       final pitch = atan2(-event.z, sqrt(event.x * event.x + event.y * event.y)) * 180 / pi;
       setState(() => _devicePitch = pitch);
     });
@@ -139,7 +143,7 @@ class _CameraScreenState extends State<CameraScreen>
           _selectedCameraIndex = safeIndex;
           _minExposure = minExp;
           _maxExposure = maxExp;
-          _maxZoom = maxZoom.clamp(1.0, 10.0); // limit max zoom to 10x
+          _maxZoom = maxZoom.clamp(1.0, 10.0);
           _zoomLevel = 1.0;
           _exposureOffset = 0.0;
         });
@@ -152,7 +156,7 @@ class _CameraScreenState extends State<CameraScreen>
   Future<void> _switchCamera(int index) async {
     if (_cameras == null || index >= _cameras!.length) return;
     if (index == _selectedCameraIndex || _isSwitchingCamera) return;
-    setState(() => _isSwitchingCamera = true);
+    setState(() { _isSwitchingCamera = true; _lockedMoonPosition = null; });
     await _initCamera(index: index);
     if (mounted) setState(() => _isSwitchingCamera = false);
   }
@@ -181,20 +185,41 @@ class _CameraScreenState extends State<CameraScreen>
     setState(() => _moonPosition = moon);
   }
 
+  void _onTapScreen(TapUpDetails details) {
+    if (_isLocked) return; // already locked, ignore
+    final pos = details.localPosition;
+    setState(() => _lockedMoonPosition = pos);
+    _lockAnimController.forward(from: 0);
+    HapticFeedback.mediumImpact();
+
+    // Auto-set exposure on tapped position
+    if (_controller != null) {
+      final size = context.size;
+      if (size != null) {
+        final point = Offset(pos.dx / size.width, pos.dy / size.height);
+        _controller!.setExposurePoint(point);
+        _controller!.setFocusPoint(point);
+      }
+    }
+  }
+
+  void _unlockMoon() {
+    setState(() => _lockedMoonPosition = null);
+    _lockAnimController.reverse();
+    HapticFeedback.lightImpact();
+  }
+
   Offset? _getMoonScreenOffset() {
     if (_moonPosition == null) return null;
-    // Azimuth difference (horizontal)
     double azDiff = _moonPosition!.azimuth - _deviceAzimuth;
     while (azDiff > 180) azDiff -= 360;
     while (azDiff < -180) azDiff += 360;
-    // Altitude difference (vertical) — now using real device pitch
     double altDiff = _moonPosition!.altitude - _devicePitch;
-    final double nx = azDiff / 30.0;
-    final double ny = -altDiff / 22.5;
-    return Offset(nx, ny);
+    return Offset(azDiff / 30.0, -altDiff / 22.5);
   }
 
   bool _isMoonInFrame() {
+    if (_isLocked) return true; // if locked, always "in frame"
     final offset = _getMoonScreenOffset();
     if (offset == null) return false;
     return offset.dx.abs() < 0.85 && offset.dy.abs() < 0.85;
@@ -226,13 +251,6 @@ class _CameraScreenState extends State<CameraScreen>
     if (_controller == null || _isTakingPhoto) return;
     setState(() => _isTakingPhoto = true);
     try {
-      if (_isMoonInFrame()) {
-        final offset = _getMoonScreenOffset()!;
-        final point = Offset((offset.dx + 1) / 2, (offset.dy + 1) / 2);
-        await _controller!.setExposurePoint(point);
-        await _controller!.setFocusPoint(point);
-        await Future.delayed(const Duration(milliseconds: 500));
-      }
       final file = await _controller!.takePicture();
       setState(() => _isTakingPhoto = false);
       _showPhotoPreview(file.path);
@@ -337,6 +355,7 @@ class _CameraScreenState extends State<CameraScreen>
     _accelerometerSubscription?.cancel();
     _pulseController.dispose();
     _rotateController.dispose();
+    _lockAnimController.dispose();
     _controller?.dispose();
     super.dispose();
   }
@@ -345,31 +364,69 @@ class _CameraScreenState extends State<CameraScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
-      body: Stack(
-        fit: StackFit.expand,
-        children: [
-          if (_controller != null && _controller!.value.isInitialized)
-            SizedBox.expand(
-              child: FittedBox(
-                fit: BoxFit.cover,
-                child: SizedBox(
-                  width: _controller!.value.previewSize!.height,
-                  height: _controller!.value.previewSize!.width,
-                  child: CameraPreview(_controller!),
+      body: GestureDetector(
+        onTapUp: _isLocked ? null : _onTapScreen,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (_controller != null && _controller!.value.isInitialized)
+              SizedBox.expand(
+                child: FittedBox(
+                  fit: BoxFit.cover,
+                  child: SizedBox(
+                    width: _controller!.value.previewSize!.height,
+                    height: _controller!.value.previewSize!.width,
+                    child: CameraPreview(_controller!),
+                  ),
+                ),
+              ),
+            if (_isSwitchingCamera)
+              Container(color: Colors.black.withOpacity(0.6), child: Center(child: CircularProgressIndicator(color: _uiColor))),
+            if (_nightMode) Container(color: Colors.red.withOpacity(0.08)),
+            _buildMoonOverlay(),
+            _buildTopBar(),
+            _buildSkyMap(),
+            _buildLensSwitcher(),
+            _buildLockIndicator(),
+            if (_showControls) _buildControlsPanel(),
+            _buildBottomControls(),
+            if (_timerCountdown > 0) _buildCountdown(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Lock indicator — shown when moon is locked
+  Widget _buildLockIndicator() {
+    if (!_isLocked) return const SizedBox();
+    return Positioned(
+      top: 0, left: 0, right: 0,
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.only(top: 100),
+          child: Center(
+            child: GestureDetector(
+              onTap: _unlockMoon,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.amber.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.amber, width: 1.5),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.lock, color: Colors.amber, size: 14),
+                    const SizedBox(width: 6),
+                    const Text('Mesiac zamknutý — ťukni pre odomknutie', style: TextStyle(color: Colors.amber, fontSize: 11, fontWeight: FontWeight.bold)),
+                  ],
                 ),
               ),
             ),
-          if (_isSwitchingCamera)
-            Container(color: Colors.black.withOpacity(0.6), child: Center(child: CircularProgressIndicator(color: _uiColor))),
-          if (_nightMode) Container(color: Colors.red.withOpacity(0.08)),
-          _buildMoonOverlay(),
-          _buildTopBar(),
-          _buildSkyMap(),
-          _buildLensSwitcher(),
-          if (_showControls) _buildControlsPanel(),
-          _buildBottomControls(),
-          if (_timerCountdown > 0) _buildCountdown(),
-        ],
+          ),
+        ),
       ),
     );
   }
@@ -441,27 +498,57 @@ class _CameraScreenState extends State<CameraScreen>
 
   Widget _buildMoonOverlay() {
     if (_moonPosition == null) return const SizedBox();
-    final inFrame = _isMoonInFrame();
-    final offset = _getMoonScreenOffset();
+
     return LayoutBuilder(builder: (context, constraints) {
-      final cx = constraints.maxWidth / 2, cy = constraints.maxHeight / 2;
-      if (inFrame && offset != null) {
-        final moonX = cx + offset.dx * cx * 0.8, moonY = cy + offset.dy * cy * 0.8;
+      final cx = constraints.maxWidth / 2;
+      final cy = constraints.maxHeight / 2;
+
+      // If locked — use tapped position
+      if (_isLocked && _lockedMoonPosition != null) {
         return AnimatedBuilder(
-          animation: Listenable.merge([_pulseAnimation, _rotateAnimation]),
+          animation: Listenable.merge([_pulseAnimation, _rotateAnimation, _lockAnimation]),
           builder: (_, __) => CustomPaint(
-            painter: MoonCirclePainter(center: Offset(moonX, moonY), radius: 60 * _pulseAnimation.value, rotation: _rotateAnimation.value, nightMode: _nightMode),
+            painter: MoonCirclePainter(
+              center: _lockedMoonPosition!,
+              radius: 60 * _pulseAnimation.value,
+              rotation: _rotateAnimation.value,
+              nightMode: _nightMode,
+              isLocked: true,
+              lockProgress: _lockAnimation.value,
+            ),
             child: const SizedBox.expand(),
           ),
         );
-      } else if (offset != null) {
+      }
+
+      // Not locked — use astronomical position
+      final offset = _getMoonScreenOffset();
+      if (offset == null) return const SizedBox();
+
+      final inFrame = offset.dx.abs() < 0.85 && offset.dy.abs() < 0.85;
+
+      if (inFrame) {
+        final moonX = cx + offset.dx * cx * 0.8;
+        final moonY = cy + offset.dy * cy * 0.8;
+        return AnimatedBuilder(
+          animation: Listenable.merge([_pulseAnimation, _rotateAnimation]),
+          builder: (_, __) => CustomPaint(
+            painter: MoonCirclePainter(
+              center: Offset(moonX, moonY),
+              radius: 60 * _pulseAnimation.value,
+              rotation: _rotateAnimation.value,
+              nightMode: _nightMode,
+            ),
+            child: const SizedBox.expand(),
+          ),
+        );
+      } else {
         final angle = atan2(offset.dy, offset.dx);
         return CustomPaint(
           painter: MoonArrowPainter(centerX: cx, centerY: cy, angle: angle, altitude: _moonPosition!.altitude, nightMode: _nightMode),
           child: const SizedBox.expand(),
         );
       }
-      return const SizedBox();
     });
   }
 
@@ -610,11 +697,16 @@ class _CameraScreenState extends State<CameraScreen>
             children: [
               Text(
                 _timerCountdown > 0 ? '⏱️ Fotím za $_timerCountdown s...'
-                    : inFrame ? '🎯 Mesiac je v zábere! Sprav fotku!'
+                    : _isLocked ? '🔒 Ťukni na spúšť pre fotku'
+                    : inFrame ? '👆 Ťukni na mesiac pre zamknutie'
                     : _moonPosition != null ? (_moonPosition!.isAboveHorizon ? '👆 Namiery telefón podľa šípky' : '😔 Mesiac je pod horizontom')
                     : _statusMessage,
                 textAlign: TextAlign.center,
-                style: TextStyle(color: inFrame ? Colors.greenAccent : _uiColorDim, fontSize: 13, fontWeight: inFrame ? FontWeight.bold : FontWeight.normal),
+                style: TextStyle(
+                  color: _isLocked ? Colors.amber : inFrame ? Colors.greenAccent : _uiColorDim,
+                  fontSize: 13,
+                  fontWeight: _isLocked || inFrame ? FontWeight.bold : FontWeight.normal,
+                ),
               ),
               const SizedBox(height: 16),
               Row(
@@ -629,11 +721,17 @@ class _CameraScreenState extends State<CameraScreen>
                       width: 80, height: 80,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: _isTakingPhoto || _timerCountdown > 0 ? _uiColor.withOpacity(0.3) : inFrame ? _uiColor : _uiColor.withOpacity(0.4),
-                        border: Border.all(color: inFrame ? _uiColor : _uiColor.withOpacity(0.4), width: 3),
-                        boxShadow: inFrame ? [BoxShadow(color: _uiColor.withOpacity(0.4), blurRadius: 20, spreadRadius: 5)] : null,
+                        color: _isTakingPhoto || _timerCountdown > 0
+                            ? _uiColor.withOpacity(0.3)
+                            : _isLocked ? Colors.amber : inFrame ? _uiColor : _uiColor.withOpacity(0.4),
+                        border: Border.all(color: _isLocked ? Colors.amber : inFrame ? _uiColor : _uiColor.withOpacity(0.4), width: 3),
+                        boxShadow: _isLocked || inFrame
+                            ? [BoxShadow(color: (_isLocked ? Colors.amber : _uiColor).withOpacity(0.4), blurRadius: 20, spreadRadius: 5)]
+                            : null,
                       ),
-                      child: _isTakingPhoto ? Center(child: CircularProgressIndicator(color: _uiColor)) : Icon(Icons.camera, size: 36, color: inFrame ? Colors.black : _uiColor.withOpacity(0.5)),
+                      child: _isTakingPhoto
+                          ? Center(child: CircularProgressIndicator(color: _uiColor))
+                          : Icon(Icons.camera, size: 36, color: _isLocked ? Colors.black : inFrame ? Colors.black : _uiColor.withOpacity(0.5)),
                     ),
                   ),
                   if (_zoomLevel > 1.0)
@@ -694,34 +792,78 @@ class MoonCirclePainter extends CustomPainter {
   final Offset center;
   final double radius, rotation;
   final bool nightMode;
-  MoonCirclePainter({required this.center, required this.radius, this.rotation = 0, this.nightMode = false});
+  final bool isLocked;
+  final double lockProgress;
+
+  MoonCirclePainter({
+    required this.center,
+    required this.radius,
+    this.rotation = 0,
+    this.nightMode = false,
+    this.isLocked = false,
+    this.lockProgress = 1.0,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
-    final color = nightMode ? Colors.red.shade400 : Colors.white;
-    canvas.drawCircle(center, radius, Paint()..color = color.withOpacity(0.12)..style = PaintingStyle.stroke..strokeWidth = 20..maskFilter = const MaskFilter.blur(BlurStyle.normal, 15));
-    canvas.drawCircle(center, radius, Paint()..color = color.withOpacity(0.85)..style = PaintingStyle.stroke..strokeWidth = 2);
+    final color = isLocked ? Colors.amber : (nightMode ? Colors.red.shade400 : Colors.white);
+
+    // Glow
+    canvas.drawCircle(center, radius, Paint()
+      ..color = color.withOpacity(0.12)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 20
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 15));
+
+    // Main circle
+    canvas.drawCircle(center, radius, Paint()
+      ..color = color.withOpacity(0.85)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = isLocked ? 3 : 2);
+
+    // Rotating dashes
     canvas.save();
     canvas.translate(center.dx, center.dy);
     canvas.rotate(rotation);
     final dashPaint = Paint()..color = color.withOpacity(0.4)..style = PaintingStyle.stroke..strokeWidth = 1;
     for (int i = 0; i < 24; i++) {
       final angle = (i / 24) * 2 * pi;
-      canvas.drawLine(Offset(cos(angle) * (radius + 8), sin(angle) * (radius + 8)), Offset(cos(angle) * (radius + 16), sin(angle) * (radius + 16)), dashPaint);
+      canvas.drawLine(
+        Offset(cos(angle) * (radius + 8), sin(angle) * (radius + 8)),
+        Offset(cos(angle) * (radius + 16), sin(angle) * (radius + 16)),
+        dashPaint,
+      );
     }
     canvas.restore();
+
+    // Lock icon when locked
+    if (isLocked && lockProgress > 0.5) {
+      final lockPaint = TextPainter(
+        text: const TextSpan(text: '🔒', style: TextStyle(fontSize: 14)),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      lockPaint.paint(canvas, Offset(center.dx - lockPaint.width / 2, center.dy - radius - 30));
+    }
+
+    // Crosshair
     final lp = Paint()..color = color.withOpacity(0.5)..strokeWidth = 1;
     canvas.drawLine(Offset(center.dx, center.dy - radius - 10), Offset(center.dx, center.dy - radius + 10), lp);
     canvas.drawLine(Offset(center.dx, center.dy + radius - 10), Offset(center.dx, center.dy + radius + 10), lp);
     canvas.drawLine(Offset(center.dx - radius - 10, center.dy), Offset(center.dx - radius + 10, center.dy), lp);
     canvas.drawLine(Offset(center.dx + radius - 10, center.dy), Offset(center.dx + radius + 10, center.dy), lp);
     canvas.drawCircle(center, 3, Paint()..color = color.withOpacity(0.6)..style = PaintingStyle.fill);
-    final tp = TextPainter(text: TextSpan(text: '🌙 MESIAC', style: TextStyle(color: color.withOpacity(0.9), fontSize: 12, fontWeight: FontWeight.bold, shadows: [Shadow(color: Colors.black, blurRadius: 4)])), textDirection: TextDirection.ltr)..layout();
+
+    // Label
+    final label = isLocked ? '🔒 ZAMKNUTÝ' : '🌙 MESIAC';
+    final tp = TextPainter(
+      text: TextSpan(text: label, style: TextStyle(color: color.withOpacity(0.9), fontSize: 12, fontWeight: FontWeight.bold, shadows: [Shadow(color: Colors.black, blurRadius: 4)])),
+      textDirection: TextDirection.ltr,
+    )..layout();
     tp.paint(canvas, Offset(center.dx - tp.width / 2, center.dy + radius + 14));
   }
 
   @override
-  bool shouldRepaint(MoonCirclePainter old) => old.radius != radius || old.rotation != rotation;
+  bool shouldRepaint(MoonCirclePainter old) => old.radius != radius || old.rotation != rotation || old.isLocked != isLocked || old.lockProgress != lockProgress;
 }
 
 class MoonArrowPainter extends CustomPainter {
