@@ -13,6 +13,7 @@
         "geolocator",
         "image_gallery_saver",
         "permission_handler",
+        "sensors_plus",
         "vector_math"
       ],
       "devDependencies": [
@@ -43,6 +44,15 @@
         "stream_channel",
         "test_api",
         "vector_math"
+      ]
+    },
+    {
+      "name": "sensors_plus",
+      "version": "7.0.0",
+      "dependencies": [
+        "flutter",
+        "flutter_web_plugins",
+        "sensors_plus_platform_interface"
       ]
     },
     {
@@ -195,6 +205,23 @@
         "stream_channel",
         "string_scanner",
         "term_glyph"
+      ]
+    },
+    {
+      "name": "sensors_plus_platform_interface",
+      "version": "2.0.1",
+      "dependencies": [
+        "flutter",
+        "logging",
+        "meta",
+        "plugin_platform_interface"
+      ]
+    },
+    {
+      "name": "flutter_web_plugins",
+      "version": "0.0.0",
+      "dependencies": [
+        "flutter"
       ]
     },
     {
@@ -414,16 +441,14 @@
       ]
     },
     {
-      "name": "web",
-      "version": "1.1.1",
+      "name": "logging",
+      "version": "1.3.0",
       "dependencies": []
     },
     {
-      "name": "flutter_web_plugins",
-      "version": "0.0.0",
-      "dependencies": [
-        "flutter"
-      ]
+      "name": "web",
+      "version": "1.1.1",
+      "dependencies": []
     },
     {
       "name": "uuid",

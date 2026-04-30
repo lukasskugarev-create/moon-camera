@@ -9,6 +9,7 @@ import 'package:flutter_compass/flutter_compass.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:image_gallery_saver/image_gallery_saver.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:sensors_plus/sensors_plus.dart';
 import 'moon_calculator.dart';
 
 class CameraScreen extends StatefulWidget {
@@ -27,7 +28,7 @@ class _CameraScreenState extends State<CameraScreen>
   MoonPosition? _moonPosition;
   Position? _devicePosition;
   double _deviceAzimuth = 0;
-  double _devicePitch = 0;
+  double _devicePitch = 0; // degrees above horizon (positive = phone tilted up)
   bool _isTakingPhoto = false;
   String _statusMessage = 'Inicializujem...';
 
@@ -42,6 +43,8 @@ class _CameraScreenState extends State<CameraScreen>
   int _timerSeconds = 0;
   int _timerCountdown = 0;
   Timer? _countdownTimer;
+
+  StreamSubscription? _accelerometerSubscription;
 
   late AnimationController _pulseController;
   late AnimationController _rotateController;
@@ -80,6 +83,7 @@ class _CameraScreenState extends State<CameraScreen>
     await _initCamera();
     await _getLocation();
     _startCompass();
+    _startAccelerometer();
     _startMoonUpdates();
   }
 
@@ -95,6 +99,18 @@ class _CameraScreenState extends State<CameraScreen>
     });
   }
 
+  void _startAccelerometer() {
+    // Use accelerometer to get device pitch (tilt angle)
+    _accelerometerSubscription = accelerometerEventStream().listen((AccelerometerEvent event) {
+      if (!mounted) return;
+      // event.y is gravity component — when phone is flat: y≈9.8, when vertical: y≈0
+      // event.z is front-back tilt
+      // Calculate pitch angle in degrees
+      final pitch = atan2(-event.z, sqrt(event.x * event.x + event.y * event.y)) * 180 / pi;
+      setState(() => _devicePitch = pitch);
+    });
+  }
+
   Future<void> _initCamera({int index = 0}) async {
     try {
       final allCameras = await availableCameras();
@@ -103,19 +119,12 @@ class _CameraScreenState extends State<CameraScreen>
       _cameras = backCameras;
 
       final safeIndex = index.clamp(0, _cameras!.length - 1);
-
-      // Dispose old controller properly
       final oldController = _controller;
       _controller = null;
       if (mounted) setState(() {});
       await oldController?.dispose();
 
-      final newController = CameraController(
-        _cameras![safeIndex],
-        ResolutionPreset.max,
-        enableAudio: false,
-        imageFormatGroup: ImageFormatGroup.jpeg,
-      );
+      final newController = CameraController(_cameras![safeIndex], ResolutionPreset.max, enableAudio: false, imageFormatGroup: ImageFormatGroup.jpeg);
       await newController.initialize();
       await newController.setExposureMode(ExposureMode.auto);
       await newController.setFocusMode(FocusMode.auto);
@@ -130,7 +139,7 @@ class _CameraScreenState extends State<CameraScreen>
           _selectedCameraIndex = safeIndex;
           _minExposure = minExp;
           _maxExposure = maxExp;
-          _maxZoom = maxZoom;
+          _maxZoom = maxZoom.clamp(1.0, 10.0); // limit max zoom to 10x
           _zoomLevel = 1.0;
           _exposureOffset = 0.0;
         });
@@ -174,11 +183,15 @@ class _CameraScreenState extends State<CameraScreen>
 
   Offset? _getMoonScreenOffset() {
     if (_moonPosition == null) return null;
+    // Azimuth difference (horizontal)
     double azDiff = _moonPosition!.azimuth - _deviceAzimuth;
     while (azDiff > 180) azDiff -= 360;
     while (azDiff < -180) azDiff += 360;
+    // Altitude difference (vertical) — now using real device pitch
     double altDiff = _moonPosition!.altitude - _devicePitch;
-    return Offset(azDiff / 30.0, -altDiff / 22.5);
+    final double nx = azDiff / 30.0;
+    final double ny = -altDiff / 22.5;
+    return Offset(nx, ny);
   }
 
   bool _isMoonInFrame() {
@@ -321,6 +334,7 @@ class _CameraScreenState extends State<CameraScreen>
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
     _moonUpdateTimer?.cancel();
     _countdownTimer?.cancel();
+    _accelerometerSubscription?.cancel();
     _pulseController.dispose();
     _rotateController.dispose();
     _controller?.dispose();
@@ -360,13 +374,11 @@ class _CameraScreenState extends State<CameraScreen>
     );
   }
 
-  // Lens switcher — bottom left corner
   Widget _buildLensSwitcher() {
     if (_cameras == null || _cameras!.length <= 1) return const SizedBox();
     final labels = _lensLabels;
     return Positioned(
-      bottom: 30,
-      left: 16,
+      bottom: 30, left: 16,
       child: SafeArea(
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
@@ -389,14 +401,7 @@ class _CameraScreenState extends State<CameraScreen>
                     color: isSelected ? _uiColor : Colors.transparent,
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  child: Text(
-                    labels[i],
-                    style: TextStyle(
-                      color: isSelected ? Colors.black : _uiColor,
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
+                  child: Text(labels[i], style: TextStyle(color: isSelected ? Colors.black : _uiColor, fontSize: 13, fontWeight: FontWeight.bold)),
                 ),
               );
             }),
@@ -521,7 +526,7 @@ class _CameraScreenState extends State<CameraScreen>
                     const SizedBox(width: 6),
                     _infoChip('ALT', '${_moonPosition!.altitude.toStringAsFixed(1)}°'),
                     const SizedBox(width: 6),
-                    _infoChip('DIST', '${(_moonPosition!.distance / 1000).toStringAsFixed(0)}k km'),
+                    _infoChip('TILT', '${_devicePitch.toStringAsFixed(1)}°'),
                   ],
                 ),
               const SizedBox(height: 4),
