@@ -29,12 +29,21 @@ class _CameraScreenState extends State<CameraScreen>
   MoonPosition? _moonPosition;
   SunPosition? _sunPosition;
   Position? _devicePosition;
+
+  // Raw values
+  double _rawAzimuth = 0;
+  double _rawPitch = 0;
+
+  // Smoothed values used for overlay
   double _deviceAzimuth = 0;
   double _devicePitch = 0;
+
+  // Smoothing factor: lower = smoother but slower, higher = faster but jittery
+  final double _smoothFactor = 0.12;
+
   bool _isTakingPhoto = false;
   String _statusMessage = 'Inicializujem...';
 
-  // Sun/Moon mode
   bool _sunMode = false;
 
   double _exposureOffset = 0.0;
@@ -49,7 +58,6 @@ class _CameraScreenState extends State<CameraScreen>
   int _timerCountdown = 0;
   Timer? _countdownTimer;
 
-  // Tap-to-lock
   Offset? _lockedPosition;
   bool get _isLocked => _lockedPosition != null;
 
@@ -63,7 +71,6 @@ class _CameraScreenState extends State<CameraScreen>
   late Animation<double> _lockAnimation;
   Timer? _positionUpdateTimer;
 
-  // Current target (moon or sun)
   double? get _targetAzimuth => _sunMode ? _sunPosition?.azimuth : _moonPosition?.azimuth;
   double? get _targetAltitude => _sunMode ? _sunPosition?.altitude : _moonPosition?.altitude;
   bool get _targetAboveHorizon => _sunMode ? (_sunPosition?.isAboveHorizon ?? false) : (_moonPosition?.isAboveHorizon ?? false);
@@ -79,7 +86,6 @@ class _CameraScreenState extends State<CameraScreen>
     }
   }
 
-  // Colors based on mode
   Color get _uiColor {
     if (_nightMode) return Colors.red.shade400;
     return _sunMode ? Colors.orange : Colors.white;
@@ -128,10 +134,25 @@ class _CameraScreenState extends State<CameraScreen>
     await [Permission.camera, Permission.location, Permission.photos].request();
   }
 
+  // Smooth angle difference (handles 0/360 wrap)
+  double _angleDiff(double target, double current) {
+    double diff = target - current;
+    while (diff > 180) diff -= 360;
+    while (diff < -180) diff += 360;
+    return diff;
+  }
+
   void _startCompass() {
     FlutterCompass.events?.listen((event) {
       if (mounted && event.heading != null) {
-        setState(() => _deviceAzimuth = event.heading!);
+        _rawAzimuth = event.heading!;
+        // Smooth azimuth
+        final diff = _angleDiff(_rawAzimuth, _deviceAzimuth);
+        setState(() {
+          _deviceAzimuth = _deviceAzimuth + _smoothFactor * diff;
+          if (_deviceAzimuth < 0) _deviceAzimuth += 360;
+          if (_deviceAzimuth >= 360) _deviceAzimuth -= 360;
+        });
       }
     });
   }
@@ -139,8 +160,11 @@ class _CameraScreenState extends State<CameraScreen>
   void _startAccelerometer() {
     _accelerometerSubscription = accelerometerEventStream().listen((AccelerometerEvent event) {
       if (!mounted) return;
-      final pitch = atan2(-event.z, sqrt(event.x * event.x + event.y * event.y)) * 180 / pi;
-      setState(() => _devicePitch = pitch);
+      _rawPitch = atan2(-event.z, sqrt(event.x * event.x + event.y * event.y)) * 180 / pi;
+      // Smooth pitch
+      setState(() {
+        _devicePitch = _devicePitch + _smoothFactor * (_rawPitch - _devicePitch);
+      });
     });
   }
 
@@ -213,17 +237,11 @@ class _CameraScreenState extends State<CameraScreen>
     final now = DateTime.now();
     final moon = MoonCalculator.calculate(_devicePosition!.latitude, _devicePosition!.longitude, now);
     final sun = SunCalculator.calculate(_devicePosition!.latitude, _devicePosition!.longitude, now);
-    setState(() {
-      _moonPosition = moon;
-      _sunPosition = sun;
-    });
+    setState(() { _moonPosition = moon; _sunPosition = sun; });
   }
 
   void _toggleMode() {
-    setState(() {
-      _sunMode = !_sunMode;
-      _lockedPosition = null;
-    });
+    setState(() { _sunMode = !_sunMode; _lockedPosition = null; });
     HapticFeedback.lightImpact();
   }
 
@@ -622,7 +640,6 @@ class _CameraScreenState extends State<CameraScreen>
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  // Mode toggle button
                   GestureDetector(
                     onTap: _toggleMode,
                     child: AnimatedContainer(
@@ -638,10 +655,7 @@ class _CameraScreenState extends State<CameraScreen>
                         children: [
                           Text(_sunMode ? '☀️' : '🌙', style: const TextStyle(fontSize: 16)),
                           const SizedBox(width: 6),
-                          Text(
-                            _sunMode ? 'SLNKO' : 'MESIAC',
-                            style: TextStyle(color: _uiColor, fontSize: 13, fontWeight: FontWeight.bold, letterSpacing: 1),
-                          ),
+                          Text(_sunMode ? 'SLNKO' : 'MESIAC', style: TextStyle(color: _uiColor, fontSize: 13, fontWeight: FontWeight.bold, letterSpacing: 1)),
                         ],
                       ),
                     ),
@@ -650,9 +664,9 @@ class _CameraScreenState extends State<CameraScreen>
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                       decoration: BoxDecoration(
-                        color: aboveHorizon ? (_nightMode ? Colors.red.shade900.withOpacity(0.3) : (_sunMode ? Colors.orange.withOpacity(0.2) : Colors.blue.withOpacity(0.3))) : Colors.red.withOpacity(0.3),
+                        color: aboveHorizon ? (_sunMode ? Colors.orange.withOpacity(0.2) : Colors.blue.withOpacity(0.3)) : Colors.red.withOpacity(0.3),
                         borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: aboveHorizon ? (_sunMode ? Colors.orange : (_nightMode ? Colors.red.shade700 : Colors.blue)) : Colors.red),
+                        border: Border.all(color: aboveHorizon ? (_sunMode ? Colors.orange : Colors.blue) : Colors.red),
                       ),
                       child: Text(aboveHorizon ? '↑ NAD' : '↓ POD', style: TextStyle(color: _uiColorDim, fontSize: 10, fontWeight: FontWeight.bold)),
                     ),
@@ -677,7 +691,7 @@ class _CameraScreenState extends State<CameraScreen>
                         decoration: BoxDecoration(
                           color: _showControls ? _uiColor.withOpacity(0.3) : Colors.transparent,
                           borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: _nightMode ? Colors.red.shade700 : Colors.white38),
+                          border: Border.all(color: Colors.white38),
                         ),
                         child: Icon(Icons.tune, color: _uiColor, size: 18),
                       ),
@@ -702,8 +716,7 @@ class _CameraScreenState extends State<CameraScreen>
                 children: [
                   if (!_sunMode) Text(_getMoonPhase(), style: TextStyle(color: _uiColorDim, fontSize: 11)),
                   if (!_sunMode) const SizedBox(width: 8),
-                  Text('🌅 ${_getRiseTime(_sunMode)}  🌇 ${_getSetTime(_sunMode)}',
-                    style: TextStyle(color: _uiColorDim, fontSize: 11)),
+                  Text('🌅 ${_getRiseTime(_sunMode)}  🌇 ${_getSetTime(_sunMode)}', style: TextStyle(color: _uiColorDim, fontSize: 11)),
                 ],
               ),
             ],
@@ -828,12 +841,7 @@ class SkyMapPainter extends CustomPainter {
   final double moonAzimuth, moonAltitude, sunAzimuth, sunAltitude, deviceAzimuth;
   final bool nightMode, sunMode;
 
-  SkyMapPainter({
-    required this.moonAzimuth, required this.moonAltitude,
-    required this.sunAzimuth, required this.sunAltitude,
-    required this.deviceAzimuth,
-    this.nightMode = false, this.sunMode = false,
-  });
+  SkyMapPainter({required this.moonAzimuth, required this.moonAltitude, required this.sunAzimuth, required this.sunAltitude, required this.deviceAzimuth, this.nightMode = false, this.sunMode = false});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -851,38 +859,24 @@ class SkyMapPainter extends CustomPainter {
       dirPaint.layout();
       dirPaint.paint(canvas, Offset(dx - dirPaint.width / 2, dy - dirPaint.height / 2));
     }
-    // FOV wedge
     final fovAngle = 30.0 * pi / 180;
     final wedgePath = Path()..moveTo(cx, cy)..arcTo(Rect.fromCircle(center: Offset(cx, cy), radius: r * 0.9), -pi / 2 - fovAngle / 2, fovAngle, false)..close();
     canvas.drawPath(wedgePath, Paint()..color = Colors.white.withOpacity(0.08));
-
-    // Moon dot
     if (moonAltitude > -10) {
       final moonAngle = (moonAzimuth - deviceAzimuth) * pi / 180;
       final moonR = r * (1 - (moonAltitude.clamp(-10.0, 90.0) + 10) / 100) * 0.9;
       final mx = cx + sin(moonAngle) * moonR, my = cy - cos(moonAngle) * moonR;
       canvas.drawCircle(Offset(mx, my), sunMode ? 3 : 5, Paint()..color = moonAltitude > 0 ? Colors.white70 : Colors.white30);
-      if (!sunMode) {
-        final moonTp = TextPainter(text: const TextSpan(text: '🌙', style: TextStyle(fontSize: 7)), textDirection: TextDirection.ltr)..layout();
-        moonTp.paint(canvas, Offset(mx - moonTp.width / 2, my - moonTp.height - 2));
-      }
     }
-
-    // Sun dot
     if (sunAltitude > -10) {
       final sunAngle = (sunAzimuth - deviceAzimuth) * pi / 180;
       final sunR = r * (1 - (sunAltitude.clamp(-10.0, 90.0) + 10) / 100) * 0.9;
       final sx = cx + sin(sunAngle) * sunR, sy = cy - cos(sunAngle) * sunR;
       canvas.drawCircle(Offset(sx, sy), 6, Paint()..color = Colors.yellow.withOpacity(0.3)..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3));
       canvas.drawCircle(Offset(sx, sy), sunMode ? 5 : 3, Paint()..color = sunAltitude > 0 ? Colors.yellow : Colors.yellow.withOpacity(0.4));
-      if (sunMode) {
-        final sunTp = TextPainter(text: const TextSpan(text: '☀️', style: TextStyle(fontSize: 7)), textDirection: TextDirection.ltr)..layout();
-        sunTp.paint(canvas, Offset(sx - sunTp.width / 2, sy - sunTp.height - 2));
-      }
     }
-
     canvas.drawCircle(Offset(cx, cy), 3, Paint()..color = Colors.white54..style = PaintingStyle.fill);
-    final labelTp = TextPainter(text: TextSpan(text: 'OBLOHA', style: TextStyle(color: Colors.white30, fontSize: 7, letterSpacing: 1)), textDirection: TextDirection.ltr)..layout();
+    final labelTp = TextPainter(text: TextSpan(text: 'OBLOHA', style: const TextStyle(color: Colors.white30, fontSize: 7, letterSpacing: 1)), textDirection: TextDirection.ltr)..layout();
     labelTp.paint(canvas, Offset(cx - labelTp.width / 2, size.height - 12));
   }
 
@@ -897,10 +891,7 @@ class TargetCirclePainter extends CustomPainter {
   final bool isLocked, isSun;
   final double lockProgress;
 
-  TargetCirclePainter({
-    required this.center, required this.radius, required this.rotation,
-    required this.color, this.isLocked = false, this.isSun = false, this.lockProgress = 1.0,
-  });
+  TargetCirclePainter({required this.center, required this.radius, required this.rotation, required this.color, this.isLocked = false, this.isSun = false, this.lockProgress = 1.0});
 
   @override
   void paint(Canvas canvas, Size size) {
