@@ -11,6 +11,7 @@
         "flutter",
         "flutter_compass",
         "geolocator",
+        "http",
         "image_gallery_saver",
         "permission_handler",
         "sensors_plus",
@@ -44,6 +45,16 @@
         "stream_channel",
         "test_api",
         "vector_math"
+      ]
+    },
+    {
+      "name": "http",
+      "version": "1.6.0",
+      "dependencies": [
+        "async",
+        "http_parser",
+        "meta",
+        "web"
       ]
     },
     {
@@ -205,6 +216,29 @@
         "stream_channel",
         "string_scanner",
         "term_glyph"
+      ]
+    },
+    {
+      "name": "web",
+      "version": "1.1.1",
+      "dependencies": []
+    },
+    {
+      "name": "http_parser",
+      "version": "4.1.2",
+      "dependencies": [
+        "collection",
+        "source_span",
+        "string_scanner",
+        "typed_data"
+      ]
+    },
+    {
+      "name": "async",
+      "version": "2.13.1",
+      "dependencies": [
+        "collection",
+        "meta"
       ]
     },
     {
@@ -377,14 +411,6 @@
       "dependencies": []
     },
     {
-      "name": "async",
-      "version": "2.13.1",
-      "dependencies": [
-        "collection",
-        "meta"
-      ]
-    },
-    {
       "name": "leak_tracker_testing",
       "version": "3.0.2",
       "dependencies": [
@@ -434,6 +460,13 @@
       ]
     },
     {
+      "name": "typed_data",
+      "version": "1.4.0",
+      "dependencies": [
+        "collection"
+      ]
+    },
+    {
       "name": "plugin_platform_interface",
       "version": "2.1.8",
       "dependencies": [
@@ -443,11 +476,6 @@
     {
       "name": "logging",
       "version": "1.3.0",
-      "dependencies": []
-    },
-    {
-      "name": "web",
-      "version": "1.1.1",
       "dependencies": []
     },
     {
@@ -486,13 +514,6 @@
       "version": "3.0.7",
       "dependencies": [
         "typed_data"
-      ]
-    },
-    {
-      "name": "typed_data",
-      "version": "1.4.0",
-      "dependencies": [
-        "collection"
       ]
     }
   ],
