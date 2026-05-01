@@ -30,13 +30,10 @@ class _CameraScreenState extends State<CameraScreen>
   SunPosition? _sunPosition;
   Position? _devicePosition;
 
-  double _rawAzimuth = 0;
-  double _rawPitch = 0;
   double _deviceAzimuth = 0;
   double _devicePitch = 0;
-  final double _smoothFactor = 0.12;
+  final double _smoothFactor = 0.08; // lower = smoother
 
-  // Hysteresis — tracks if target was in frame last frame
   bool _wasInFrame = false;
   static const double _enterThreshold = 0.75;
   static const double _exitThreshold = 1.1;
@@ -59,6 +56,9 @@ class _CameraScreenState extends State<CameraScreen>
 
   Offset? _lockedPosition;
   bool get _isLocked => _lockedPosition != null;
+
+  // Smoothed circle position for animation
+  Offset? _circlePosition;
 
   StreamSubscription? _accelerometerSubscription;
 
@@ -143,8 +143,7 @@ class _CameraScreenState extends State<CameraScreen>
   void _startCompass() {
     FlutterCompass.events?.listen((event) {
       if (mounted && event.heading != null) {
-        _rawAzimuth = event.heading!;
-        final diff = _angleDiff(_rawAzimuth, _deviceAzimuth);
+        final diff = _angleDiff(event.heading!, _deviceAzimuth);
         setState(() {
           _deviceAzimuth = _deviceAzimuth + _smoothFactor * diff;
           if (_deviceAzimuth < 0) _deviceAzimuth += 360;
@@ -157,9 +156,9 @@ class _CameraScreenState extends State<CameraScreen>
   void _startAccelerometer() {
     _accelerometerSubscription = accelerometerEventStream().listen((AccelerometerEvent event) {
       if (!mounted) return;
-      _rawPitch = atan2(-event.z, sqrt(event.x * event.x + event.y * event.y)) * 180 / pi;
+      final rawPitch = atan2(-event.z, sqrt(event.x * event.x + event.y * event.y)) * 180 / pi;
       setState(() {
-        _devicePitch = _devicePitch + _smoothFactor * (_rawPitch - _devicePitch);
+        _devicePitch = _devicePitch + _smoothFactor * (rawPitch - _devicePitch);
       });
     });
   }
@@ -205,7 +204,7 @@ class _CameraScreenState extends State<CameraScreen>
   Future<void> _switchCamera(int index) async {
     if (_cameras == null || index >= _cameras!.length) return;
     if (index == _selectedCameraIndex || _isSwitchingCamera) return;
-    setState(() { _isSwitchingCamera = true; _lockedPosition = null; _wasInFrame = false; });
+    setState(() { _isSwitchingCamera = true; _lockedPosition = null; _wasInFrame = false; _circlePosition = null; });
     await _initCamera(index: index);
     if (mounted) setState(() => _isSwitchingCamera = false);
   }
@@ -237,7 +236,7 @@ class _CameraScreenState extends State<CameraScreen>
   }
 
   void _toggleMode() {
-    setState(() { _sunMode = !_sunMode; _lockedPosition = null; _wasInFrame = false; });
+    setState(() { _sunMode = !_sunMode; _lockedPosition = null; _wasInFrame = false; _circlePosition = null; });
     HapticFeedback.lightImpact();
   }
 
@@ -254,12 +253,31 @@ class _CameraScreenState extends State<CameraScreen>
     if (_isLocked) return true;
     final offset = _getScreenOffset();
     if (offset == null) return false;
-
-    // Hysteresis: use larger threshold to exit than to enter
     final threshold = _wasInFrame ? _exitThreshold : _enterThreshold;
     final inFrame = offset.dx.abs() < threshold && offset.dy.abs() < threshold;
     _wasInFrame = inFrame;
     return inFrame;
+  }
+
+  // Compute target screen position and smooth the circle towards it
+  Offset? _getSmoothedCirclePosition(double cx, double cy) {
+    final offset = _getScreenOffset();
+    if (offset == null) return null;
+
+    final targetX = cx + offset.dx * cx * 0.8;
+    final targetY = cy + offset.dy * cy * 0.8;
+    final target = Offset(targetX, targetY);
+
+    if (_circlePosition == null) {
+      _circlePosition = target;
+    } else {
+      // Smooth circle movement — interpolate towards target
+      _circlePosition = Offset(
+        _circlePosition!.dx + 0.15 * (target.dx - _circlePosition!.dx),
+        _circlePosition!.dy + 0.15 * (target.dy - _circlePosition!.dy),
+      );
+    }
+    return _circlePosition;
   }
 
   void _onTapScreen(TapUpDetails details) {
@@ -279,7 +297,7 @@ class _CameraScreenState extends State<CameraScreen>
   }
 
   void _unlockPosition() {
-    setState(() { _lockedPosition = null; _wasInFrame = false; });
+    setState(() { _lockedPosition = null; _wasInFrame = false; _circlePosition = null; });
     _lockAnimController.reverse();
     HapticFeedback.lightImpact();
   }
@@ -465,6 +483,69 @@ class _CameraScreenState extends State<CameraScreen>
     );
   }
 
+  Widget _buildOverlay() {
+    return LayoutBuilder(builder: (context, constraints) {
+      final cx = constraints.maxWidth / 2;
+      final cy = constraints.maxHeight / 2;
+
+      // Locked position
+      if (_isLocked && _lockedPosition != null) {
+        return AnimatedBuilder(
+          animation: Listenable.merge([_pulseAnimation, _rotateAnimation, _lockAnimation]),
+          builder: (_, __) => CustomPaint(
+            painter: TargetCirclePainter(
+              center: _lockedPosition!,
+              radius: 60 * _pulseAnimation.value,
+              rotation: _rotateAnimation.value,
+              color: Colors.amber,
+              isLocked: true,
+              lockProgress: _lockAnimation.value,
+              isSun: _sunMode,
+            ),
+            child: const SizedBox.expand(),
+          ),
+        );
+      }
+
+      final offset = _getScreenOffset();
+      if (offset == null) return const SizedBox();
+      final inFrame = _isTargetInFrame();
+
+      if (inFrame) {
+        // Get smoothed position
+        final smoothedPos = _getSmoothedCirclePosition(cx, cy);
+        if (smoothedPos == null) return const SizedBox();
+
+        return AnimatedBuilder(
+          animation: Listenable.merge([_pulseAnimation, _rotateAnimation]),
+          builder: (_, __) => CustomPaint(
+            painter: TargetCirclePainter(
+              center: smoothedPos,
+              radius: 60 * _pulseAnimation.value,
+              rotation: _rotateAnimation.value,
+              color: _targetColor,
+              isSun: _sunMode,
+            ),
+            child: const SizedBox.expand(),
+          ),
+        );
+      } else {
+        // Arrow — also smoothed direction
+        final angle = atan2(offset.dy, offset.dx);
+        return CustomPaint(
+          painter: TargetArrowPainter(
+            centerX: cx, centerY: cy,
+            angle: angle,
+            altitude: _targetAltitude ?? 0,
+            color: _targetColor,
+            isSun: _sunMode,
+          ),
+          child: const SizedBox.expand(),
+        );
+      }
+    });
+  }
+
   Widget _buildLockIndicator() {
     if (!_isLocked) return const SizedBox();
     return Positioned(
@@ -568,65 +649,6 @@ class _CameraScreenState extends State<CameraScreen>
         ),
       ),
     );
-  }
-
-  Widget _buildOverlay() {
-    return LayoutBuilder(builder: (context, constraints) {
-      final cx = constraints.maxWidth / 2;
-      final cy = constraints.maxHeight / 2;
-
-      if (_isLocked && _lockedPosition != null) {
-        return AnimatedBuilder(
-          animation: Listenable.merge([_pulseAnimation, _rotateAnimation, _lockAnimation]),
-          builder: (_, __) => CustomPaint(
-            painter: TargetCirclePainter(
-              center: _lockedPosition!,
-              radius: 60 * _pulseAnimation.value,
-              rotation: _rotateAnimation.value,
-              color: Colors.amber,
-              isLocked: true,
-              lockProgress: _lockAnimation.value,
-              isSun: _sunMode,
-            ),
-            child: const SizedBox.expand(),
-          ),
-        );
-      }
-
-      final offset = _getScreenOffset();
-      if (offset == null) return const SizedBox();
-      final inFrame = _isTargetInFrame();
-
-      if (inFrame) {
-        final tx = cx + offset.dx * cx * 0.8;
-        final ty = cy + offset.dy * cy * 0.8;
-        return AnimatedBuilder(
-          animation: Listenable.merge([_pulseAnimation, _rotateAnimation]),
-          builder: (_, __) => CustomPaint(
-            painter: TargetCirclePainter(
-              center: Offset(tx, ty),
-              radius: 60 * _pulseAnimation.value,
-              rotation: _rotateAnimation.value,
-              color: _targetColor,
-              isSun: _sunMode,
-            ),
-            child: const SizedBox.expand(),
-          ),
-        );
-      } else {
-        final angle = atan2(offset.dy, offset.dx);
-        return CustomPaint(
-          painter: TargetArrowPainter(
-            centerX: cx, centerY: cy,
-            angle: angle,
-            altitude: _targetAltitude ?? 0,
-            color: _targetColor,
-            isSun: _sunMode,
-          ),
-          child: const SizedBox.expand(),
-        );
-      }
-    });
   }
 
   Widget _buildTopBar() {
@@ -919,7 +941,7 @@ class TargetCirclePainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(TargetCirclePainter old) => old.radius != radius || old.rotation != rotation || old.isLocked != isLocked;
+  bool shouldRepaint(TargetCirclePainter old) => old.radius != radius || old.rotation != rotation || old.isLocked != isLocked || old.center != center;
 }
 
 class TargetArrowPainter extends CustomPainter {
