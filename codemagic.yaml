@@ -3,8 +3,8 @@ workflows:
     name: iOS Workflow
     instance_type: mac_mini_m2
     environment:
-      flutter: stable
-      xcode: latest
+      flutter: 3.22.3
+      xcode: 16.2
     scripts:
       - name: Get Flutter packages
         script: flutter pub get
