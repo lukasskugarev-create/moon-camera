@@ -6,6 +6,8 @@ workflows:
       flutter: 3.22.3
       xcode: 16.2
     scripts:
+      - name: Check Xcode version
+        script: xcodebuild -version
       - name: Get Flutter packages
         script: flutter pub get
       - name: Build iOS
