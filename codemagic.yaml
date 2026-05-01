@@ -4,15 +4,20 @@ workflows:
     instance_type: mac_mini_m2
     environment:
       flutter: stable
-      xcode:  16.2
+      xcode: 16.2
     scripts:
       - name: Get Flutter packages
         script: flutter pub get
+      - name: Disable codesigning
+        script: |
+          find . -name "*.xcconfig" -exec sed -i '' 's/CODE_SIGN_IDENTITY = .*/CODE_SIGN_IDENTITY = /g' {} \;
       - name: Build iOS
-        script: flutter build ios --release --no-codesign
+        script: |
+          flutter build ios --release --no-codesign --verbose 2>&1 | tail -100
       - name: Create IPA
         script: |
           APP_PATH=$(find build/ios -name "Runner.app" -type d | head -1)
+          echo "App path: $APP_PATH"
           mkdir -p Payload
           cp -r "$APP_PATH" Payload/
           zip -r app.ipa Payload/
