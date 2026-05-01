@@ -32,7 +32,7 @@ class _CameraScreenState extends State<CameraScreen>
 
   double _deviceAzimuth = 0;
   double _devicePitch = 0;
-  final double _smoothFactor = 0.08; // lower = smoother
+  final double _smoothFactor = 0.08;
 
   bool _wasInFrame = false;
   static const double _enterThreshold = 0.75;
@@ -54,10 +54,9 @@ class _CameraScreenState extends State<CameraScreen>
   int _timerCountdown = 0;
   Timer? _countdownTimer;
 
-  Offset? _lockedPosition;
-  bool get _isLocked => _lockedPosition != null;
+  // Lock — only locks exposure/focus, circle still tracks astronomically
+  bool _isLocked = false;
 
-  // Smoothed circle position for animation
   Offset? _circlePosition;
 
   StreamSubscription? _accelerometerSubscription;
@@ -204,7 +203,7 @@ class _CameraScreenState extends State<CameraScreen>
   Future<void> _switchCamera(int index) async {
     if (_cameras == null || index >= _cameras!.length) return;
     if (index == _selectedCameraIndex || _isSwitchingCamera) return;
-    setState(() { _isSwitchingCamera = true; _lockedPosition = null; _wasInFrame = false; _circlePosition = null; });
+    setState(() { _isSwitchingCamera = true; _isLocked = false; _wasInFrame = false; _circlePosition = null; });
     await _initCamera(index: index);
     if (mounted) setState(() => _isSwitchingCamera = false);
   }
@@ -236,7 +235,7 @@ class _CameraScreenState extends State<CameraScreen>
   }
 
   void _toggleMode() {
-    setState(() { _sunMode = !_sunMode; _lockedPosition = null; _wasInFrame = false; _circlePosition = null; });
+    setState(() { _sunMode = !_sunMode; _isLocked = false; _wasInFrame = false; _circlePosition = null; });
     HapticFeedback.lightImpact();
   }
 
@@ -250,7 +249,6 @@ class _CameraScreenState extends State<CameraScreen>
   }
 
   bool _isTargetInFrame() {
-    if (_isLocked) return true;
     final offset = _getScreenOffset();
     if (offset == null) return false;
     final threshold = _wasInFrame ? _exitThreshold : _enterThreshold;
@@ -259,19 +257,15 @@ class _CameraScreenState extends State<CameraScreen>
     return inFrame;
   }
 
-  // Compute target screen position and smooth the circle towards it
   Offset? _getSmoothedCirclePosition(double cx, double cy) {
     final offset = _getScreenOffset();
     if (offset == null) return null;
-
     final targetX = cx + offset.dx * cx * 0.8;
     final targetY = cy + offset.dy * cy * 0.8;
     final target = Offset(targetX, targetY);
-
     if (_circlePosition == null) {
       _circlePosition = target;
     } else {
-      // Smooth circle movement — interpolate towards target
       _circlePosition = Offset(
         _circlePosition!.dx + 0.15 * (target.dx - _circlePosition!.dx),
         _circlePosition!.dy + 0.15 * (target.dy - _circlePosition!.dy),
@@ -281,15 +275,23 @@ class _CameraScreenState extends State<CameraScreen>
   }
 
   void _onTapScreen(TapUpDetails details) {
-    if (_isLocked) return;
-    final pos = details.localPosition;
-    setState(() => _lockedPosition = pos);
+    // Toggle lock on tap
+    if (_isLocked) {
+      _unlockPosition();
+      return;
+    }
+    // Lock exposure/focus at current target position
+    setState(() => _isLocked = true);
     _lockAnimController.forward(from: 0);
     HapticFeedback.mediumImpact();
-    if (_controller != null) {
+
+    // Lock camera exposure/focus on the astronomical target position
+    if (_controller != null && _circlePosition != null) {
       final size = context.size;
       if (size != null) {
-        final point = Offset(pos.dx / size.width, pos.dy / size.height);
+        final point = Offset(_circlePosition!.dx / size.width, _circlePosition!.dy / size.height);
+        _controller!.setExposureMode(ExposureMode.locked);
+        _controller!.setFocusMode(FocusMode.locked);
         _controller!.setExposurePoint(point);
         _controller!.setFocusPoint(point);
       }
@@ -297,9 +299,12 @@ class _CameraScreenState extends State<CameraScreen>
   }
 
   void _unlockPosition() {
-    setState(() { _lockedPosition = null; _wasInFrame = false; _circlePosition = null; });
+    setState(() { _isLocked = false; _wasInFrame = false; });
     _lockAnimController.reverse();
     HapticFeedback.lightImpact();
+    // Release exposure/focus lock
+    _controller?.setExposureMode(ExposureMode.auto);
+    _controller?.setFocusMode(FocusMode.auto);
   }
 
   Future<void> _setExposure(double value) async {
@@ -450,7 +455,7 @@ class _CameraScreenState extends State<CameraScreen>
     return Scaffold(
       backgroundColor: Colors.black,
       body: GestureDetector(
-        onTapUp: _isLocked ? null : _onTapScreen,
+        onTapUp: _onTapScreen,
         child: Stack(
           fit: StackFit.expand,
           children: [
@@ -488,31 +493,11 @@ class _CameraScreenState extends State<CameraScreen>
       final cx = constraints.maxWidth / 2;
       final cy = constraints.maxHeight / 2;
 
-      // Locked position
-      if (_isLocked && _lockedPosition != null) {
-        return AnimatedBuilder(
-          animation: Listenable.merge([_pulseAnimation, _rotateAnimation, _lockAnimation]),
-          builder: (_, __) => CustomPaint(
-            painter: TargetCirclePainter(
-              center: _lockedPosition!,
-              radius: 60 * _pulseAnimation.value,
-              rotation: _rotateAnimation.value,
-              color: Colors.amber,
-              isLocked: true,
-              lockProgress: _lockAnimation.value,
-              isSun: _sunMode,
-            ),
-            child: const SizedBox.expand(),
-          ),
-        );
-      }
-
       final offset = _getScreenOffset();
       if (offset == null) return const SizedBox();
       final inFrame = _isTargetInFrame();
 
       if (inFrame) {
-        // Get smoothed position
         final smoothedPos = _getSmoothedCirclePosition(cx, cy);
         if (smoothedPos == null) return const SizedBox();
 
@@ -524,13 +509,13 @@ class _CameraScreenState extends State<CameraScreen>
               radius: 60 * _pulseAnimation.value,
               rotation: _rotateAnimation.value,
               color: _targetColor,
+              isLocked: _isLocked,
               isSun: _sunMode,
             ),
             child: const SizedBox.expand(),
           ),
         );
       } else {
-        // Arrow — also smoothed direction
         final angle = atan2(offset.dy, offset.dx);
         return CustomPaint(
           painter: TargetArrowPainter(
@@ -568,7 +553,7 @@ class _CameraScreenState extends State<CameraScreen>
                   children: [
                     Icon(Icons.lock, color: Colors.amber, size: 14),
                     SizedBox(width: 6),
-                    Text('Zamknuté — ťukni pre odomknutie', style: TextStyle(color: Colors.amber, fontSize: 11, fontWeight: FontWeight.bold)),
+                    Text('Expozícia zamknutá — ťukni pre odomknutie', style: TextStyle(color: Colors.amber, fontSize: 11, fontWeight: FontWeight.bold)),
                   ],
                 ),
               ),
@@ -815,8 +800,8 @@ class _CameraScreenState extends State<CameraScreen>
             children: [
               Text(
                 _timerCountdown > 0 ? '⏱️ Fotím za $_timerCountdown s...'
-                    : _isLocked ? '🔒 Ťukni na spúšť pre fotku'
-                    : inFrame ? '👆 Ťukni na $emoji pre zamknutie'
+                    : _isLocked ? '🔒 Expozícia zamknutá — ťukni pre odomknutie'
+                    : inFrame ? '👆 Ťukni na $emoji pre zamknutie expozície'
                     : _targetAboveHorizon ? '👆 Namiery telefón podľa šípky'
                     : '😔 ${_sunMode ? "Slnko" : "Mesiac"} je pod horizontom',
                 textAlign: TextAlign.center,
@@ -912,9 +897,8 @@ class TargetCirclePainter extends CustomPainter {
   final double radius, rotation;
   final Color color;
   final bool isLocked, isSun;
-  final double lockProgress;
 
-  TargetCirclePainter({required this.center, required this.radius, required this.rotation, required this.color, this.isLocked = false, this.isSun = false, this.lockProgress = 1.0});
+  TargetCirclePainter({required this.center, required this.radius, required this.rotation, required this.color, this.isLocked = false, this.isSun = false});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -935,7 +919,7 @@ class TargetCirclePainter extends CustomPainter {
     canvas.drawLine(Offset(center.dx - radius - 10, center.dy), Offset(center.dx - radius + 10, center.dy), lp);
     canvas.drawLine(Offset(center.dx + radius - 10, center.dy), Offset(center.dx + radius + 10, center.dy), lp);
     canvas.drawCircle(center, 3, Paint()..color = color.withOpacity(0.6)..style = PaintingStyle.fill);
-    final label = isLocked ? '🔒 ZAMKNUTÉ' : (isSun ? '☀️ SLNKO' : '🌙 MESIAC');
+    final label = isLocked ? '🔒 ${isSun ? "SLNKO" : "MESIAC"}' : (isSun ? '☀️ SLNKO' : '🌙 MESIAC');
     final tp = TextPainter(text: TextSpan(text: label, style: TextStyle(color: color.withOpacity(0.9), fontSize: 12, fontWeight: FontWeight.bold, shadows: [Shadow(color: Colors.black, blurRadius: 4)])), textDirection: TextDirection.ltr)..layout();
     tp.paint(canvas, Offset(center.dx - tp.width / 2, center.dy + radius + 14));
   }
