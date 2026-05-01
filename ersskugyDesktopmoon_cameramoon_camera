@@ -1,0 +1,10 @@
+[33me616b38[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m)[m fix codemagic verbose build
+[33m5f617f1[m disable codesigning in pbxproj
+[33m0080232[m fix code signing manual
+[33mca1dba9[m use xcode 16.2
+[33mabd1616[m use xcode 15.4
+[33ma486729[m use xcodebuild direct
+[33m1390f98[m fix signing in yaml
+[33m2aa37c5[m unified bottom panel with tabs
+[33mf9abe65[m add grid, weather, astronomical events
+[33m98f827b[m lock exposure only, circle tracks object
