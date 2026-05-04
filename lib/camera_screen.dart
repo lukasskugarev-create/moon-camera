@@ -43,7 +43,6 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
   bool _sunMode = false;
   bool _showGrid = false;
   bool _isLocked = false;
-  bool _showTrail = true; // dráha pohybu objektu
 
   // Unified panel
   bool _showPanel = false;
@@ -295,33 +294,7 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
     return _circlePosition;
   }
 
-  // Vráti body dráhy objektu na najbližších 60 minút (každých 5 minút)
-  List<Offset> _getTrailPoints(double cx, double cy) {
-    if (_devicePosition == null) return [];
-    final points = <Offset>[];
-    final now = DateTime.now();
-    for (int i = 1; i <= 12; i++) {
-      final future = now.add(Duration(minutes: i * 5));
-      double az, alt;
-      if (_sunMode) {
-        final pos = SunCalculator.calculate(_devicePosition!.latitude, _devicePosition!.longitude, future);
-        az = pos.azimuth; alt = pos.altitude;
-      } else {
-        final pos = MoonCalculator.calculate(_devicePosition!.latitude, _devicePosition!.longitude, future);
-        az = pos.azimuth; alt = pos.altitude;
-      }
-      double azDiff = az - _deviceAzimuth;
-      while (azDiff > 180) azDiff -= 360;
-      while (azDiff < -180) azDiff += 360;
-      double altDiff = alt - _devicePitch;
-      final dx = azDiff / 30.0;
-      final dy = -altDiff / 22.5;
-      points.add(Offset(cx + dx * cx * 0.8, cy + dy * cy * 0.8));
-    }
-    return points;
-  }
-
-
+  void _onTapScreen(TapUpDetails details) {
     if (_showPanel) { _closePanel(); return; }
     if (_isLocked) { _unlockPosition(); return; }
     // Zamknúť len keď je terč v zábere
@@ -639,12 +612,6 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
       ]),
       const SizedBox(height: 8),
       Row(children: [
-        Icon(Icons.timeline, color: _uiColorDim, size: 16), const SizedBox(width: 8),
-        const Text('Dráha pohybu (60 min)', style: TextStyle(color: Colors.white70, fontSize: 13)), const Spacer(),
-        Switch(value: _showTrail, onChanged: (v) => setState(() => _showTrail = v), activeColor: _uiColor),
-      ]),
-      const SizedBox(height: 8),
-      Row(children: [
         Icon(Icons.bedtime, color: _uiColorDim, size: 16), const SizedBox(width: 8),
         const Text('Nočný režim', style: TextStyle(color: Colors.white70, fontSize: 13)), const Spacer(),
         Switch(value: _nightMode, onChanged: (v) => setState(() => _nightMode = v), activeColor: Colors.red.shade400),
@@ -871,8 +838,6 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
       final offset = _getScreenOffset();
       if (offset == null) return const SizedBox();
       final inFrame = _isTargetInFrame();
-      final trailPoints = _showTrail ? _getTrailPoints(cx, cy) : <Offset>[];
-
       if (inFrame) {
         final smoothedPos = _getSmoothedCirclePosition(cx, cy);
         if (smoothedPos == null) return const SizedBox();
@@ -886,7 +851,6 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
               color: _targetColor,
               isLocked: _isLocked,
               isSun: _sunMode,
-              trailPoints: trailPoints,
             ),
             child: const SizedBox.expand(),
           ),
@@ -1140,41 +1104,9 @@ class TargetCirclePainter extends CustomPainter {
   final double radius, rotation;
   final Color color;
   final bool isLocked, isSun;
-  final List<Offset> trailPoints;
-  TargetCirclePainter({required this.center, required this.radius, required this.rotation, required this.color, this.isLocked = false, this.isSun = false, this.trailPoints = const []});
+  TargetCirclePainter({required this.center, required this.radius, required this.rotation, required this.color, this.isLocked = false, this.isSun = false});
   @override
   void paint(Canvas canvas, Size size) {
-    // Dráha pohybu – bodkovaná čiara s gradientom priehľadnosti
-    if (trailPoints.isNotEmpty) {
-      for (int i = 0; i < trailPoints.length; i++) {
-        final opacity = (1.0 - i / trailPoints.length) * 0.6;
-        final dotRadius = 3.0 - (i / trailPoints.length) * 2.0;
-        canvas.drawCircle(
-          trailPoints[i],
-          dotRadius.clamp(1.0, 3.0),
-          Paint()..color = color.withOpacity(opacity),
-        );
-      }
-      // Čiara spájajúca body
-      if (trailPoints.length > 1) {
-        final path = Path()..moveTo(center.dx, center.dy);
-        for (final pt in trailPoints) { path.lineTo(pt.dx, pt.dy); }
-        canvas.drawPath(path, Paint()
-          ..color = color.withOpacity(0.25)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.5
-          ..strokeCap = StrokeCap.round
-          ..strokeJoin = StrokeJoin.round);
-      }
-      // Časová značka na konci (60 min)
-      final lastPt = trailPoints.last;
-      final timeTp = TextPainter(
-        text: TextSpan(text: '+60\'', style: TextStyle(color: color.withOpacity(0.5), fontSize: 9, fontWeight: FontWeight.bold)),
-        textDirection: TextDirection.ltr,
-      )..layout();
-      timeTp.paint(canvas, Offset(lastPt.dx + 5, lastPt.dy - 6));
-    }
-
     canvas.drawCircle(center, radius, Paint()..color = color.withOpacity(0.12)..style = PaintingStyle.stroke..strokeWidth = 20..maskFilter = const MaskFilter.blur(BlurStyle.normal, 15));
     canvas.drawCircle(center, radius, Paint()..color = color.withOpacity(0.85)..style = PaintingStyle.stroke..strokeWidth = isLocked ? 3 : 2);
     canvas.save();
@@ -1200,7 +1132,7 @@ class TargetCirclePainter extends CustomPainter {
     tp.paint(canvas, Offset(center.dx - tp.width / 2, center.dy + radius + 14));
   }
   @override
-  bool shouldRepaint(TargetCirclePainter old) => old.radius != radius || old.rotation != rotation || old.isLocked != isLocked || old.center != center || old.trailPoints != trailPoints;
+  bool shouldRepaint(TargetCirclePainter old) => old.radius != radius || old.rotation != rotation || old.isLocked != isLocked || old.center != center;
 }
 
 class TargetArrowPainter extends CustomPainter {
