@@ -479,23 +479,34 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
       body: GestureDetector(
         onTapUp: _onTapScreen,
         child: Stack(fit: StackFit.expand, children: [
+          // 1. Kamera (spodná vrstva)
           if (_controller != null && _controller!.value.isInitialized)
             SizedBox.expand(child: FittedBox(fit: BoxFit.cover, child: SizedBox(
               width: _controller!.value.previewSize!.height,
               height: _controller!.value.previewSize!.width,
               child: CameraPreview(_controller!),
             ))),
+          // 2. Farebné prekrytia
           if (_isSwitchingCamera) Container(color: Colors.black.withOpacity(0.6), child: Center(child: CircularProgressIndicator(color: _uiColor))),
           if (_nightMode) Container(color: Colors.red.withOpacity(0.08)),
           if (_sunMode) Container(color: Colors.orange.withOpacity(0.03)),
+          // 3. Mriežka
           if (_showGrid) CustomPaint(painter: GridPainter(color: _uiColor.withOpacity(0.3)), child: const SizedBox.expand()),
+          // 4. Overlay (šípky / kruh)
           _buildOverlay(),
+          // 5. Horná lišta
           _buildTopBar(),
+          // 6. Mapa oblohy
           _buildSkyMap(),
+          // 7. Prepínač objektívov
           _buildLensSwitcher(),
+          // 8. Indikátor zámku
           _buildLockIndicator(),
-          if (_showPanel) _buildUnifiedPanel(),
+          // 9. Spodné ovládacie prvky
           _buildBottomControls(),
+          // 10. Panel (musí byť NAD bottom controls, aby ich zakryl)
+          if (_showPanel) _buildUnifiedPanel(),
+          // 11. Odpočítavanie (vždy navrchu)
           if (_timerCountdown > 0) _buildCountdown(),
         ]),
       ),
@@ -510,12 +521,22 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
         builder: (_, __) => Transform.translate(
           offset: Offset(0, 420 * (1 - _panelAnimation.value)),
           child: GestureDetector(
-            onTap: () {},
+            onTap: () {}, // zabraňuje prepusteniu tapu cez panel
             child: Container(
               decoration: BoxDecoration(
-                color: _nightMode ? Colors.red.shade900.withOpacity(0.95) : Colors.black.withOpacity(0.92),
+                color: _nightMode
+                    ? Colors.red.shade900.withOpacity(0.97)
+                    : Colors.black.withOpacity(0.95), // zvýšená opacity pre lepšie zakrytie
                 borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
                 border: Border.all(color: _uiColor.withOpacity(0.2)),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.5),
+                    blurRadius: 20,
+                    spreadRadius: 5,
+                    offset: const Offset(0, -5),
+                  ),
+                ],
               ),
               child: Column(mainAxisSize: MainAxisSize.min, children: [
                 Padding(
@@ -533,14 +554,22 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
                     const Spacer(),
                     GestureDetector(
                       onTap: _closePanel,
-                      child: Container(padding: const EdgeInsets.all(6), decoration: BoxDecoration(color: Colors.white12, borderRadius: BorderRadius.circular(8)), child: const Icon(Icons.close, color: Colors.white54, size: 16)),
+                      child: Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(color: Colors.white12, borderRadius: BorderRadius.circular(8)),
+                        child: const Icon(Icons.close, color: Colors.white54, size: 16),
+                      ),
                     ),
                   ]),
                 ),
                 const Divider(color: Colors.white12, height: 1),
                 Padding(
                   padding: const EdgeInsets.all(16),
-                  child: _panelTab == 0 ? _buildSettingsTab() : _panelTab == 1 ? _buildWeatherTab() : _buildEventsTab(),
+                  child: _panelTab == 0
+                      ? _buildSettingsTab()
+                      : _panelTab == 1
+                          ? _buildWeatherTab()
+                          : _buildEventsTab(),
                 ),
                 SizedBox(height: MediaQuery.of(context).padding.bottom + 8),
               ]),
@@ -576,26 +605,57 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Row(children: [
         Icon(Icons.grid_on, color: _uiColorDim, size: 16), const SizedBox(width: 8),
-        Text('Mriežka', style: const TextStyle(color: Colors.white70, fontSize: 13)), const Spacer(),
+        const Text('Mriežka', style: TextStyle(color: Colors.white70, fontSize: 13)), const Spacer(),
         Switch(value: _showGrid, onChanged: (v) => setState(() => _showGrid = v), activeColor: _uiColor),
       ]),
       const SizedBox(height: 8),
       Row(children: [
         Icon(Icons.bedtime, color: _uiColorDim, size: 16), const SizedBox(width: 8),
-        Text('Nočný režim', style: const TextStyle(color: Colors.white70, fontSize: 13)), const Spacer(),
+        const Text('Nočný režim', style: TextStyle(color: Colors.white70, fontSize: 13)), const Spacer(),
         Switch(value: _nightMode, onChanged: (v) => setState(() => _nightMode = v), activeColor: Colors.red.shade400),
       ]),
       const SizedBox(height: 12),
-      Row(children: [Icon(Icons.brightness_6, color: _uiColorDim, size: 16), const SizedBox(width: 8), Text('Expozícia', style: TextStyle(color: _uiColorDim, fontSize: 12)), const Spacer(), Text(_exposureOffset.toStringAsFixed(1), style: TextStyle(color: _uiColor, fontSize: 12))]),
-      SliderTheme(data: SliderThemeData(activeTrackColor: _uiColor, inactiveTrackColor: _uiColor.withOpacity(0.2), thumbColor: _uiColor), child: Slider(value: _exposureOffset, min: _minExposure, max: _maxExposure, divisions: 16, onChanged: _setExposure)),
-      Row(children: [Icon(Icons.zoom_in, color: _uiColorDim, size: 16), const SizedBox(width: 8), Text('Zoom', style: TextStyle(color: _uiColorDim, fontSize: 12)), const Spacer(), Text('${_zoomLevel.toStringAsFixed(1)}x', style: TextStyle(color: _uiColor, fontSize: 12))]),
-      SliderTheme(data: SliderThemeData(activeTrackColor: _uiColor, inactiveTrackColor: _uiColor.withOpacity(0.2), thumbColor: _uiColor), child: Slider(value: _zoomLevel, min: 1.0, max: _maxZoom, onChanged: _setZoom)),
       Row(children: [
-        Icon(Icons.timer, color: _uiColorDim, size: 16), const SizedBox(width: 8),
-        Text('Časovač', style: TextStyle(color: _uiColorDim, fontSize: 12)), const Spacer(),
+        Icon(Icons.brightness_6, color: _uiColorDim, size: 16),
+        const SizedBox(width: 8),
+        Text('Expozícia', style: TextStyle(color: _uiColorDim, fontSize: 12)),
+        const Spacer(),
+        Text(_exposureOffset.toStringAsFixed(1), style: TextStyle(color: _uiColor, fontSize: 12)),
+      ]),
+      SliderTheme(
+        data: SliderThemeData(activeTrackColor: _uiColor, inactiveTrackColor: _uiColor.withOpacity(0.2), thumbColor: _uiColor),
+        child: Slider(value: _exposureOffset, min: _minExposure, max: _maxExposure, divisions: 16, onChanged: _setExposure),
+      ),
+      Row(children: [
+        Icon(Icons.zoom_in, color: _uiColorDim, size: 16),
+        const SizedBox(width: 8),
+        Text('Zoom', style: TextStyle(color: _uiColorDim, fontSize: 12)),
+        const Spacer(),
+        Text('${_zoomLevel.toStringAsFixed(1)}x', style: TextStyle(color: _uiColor, fontSize: 12)),
+      ]),
+      SliderTheme(
+        data: SliderThemeData(activeTrackColor: _uiColor, inactiveTrackColor: _uiColor.withOpacity(0.2), thumbColor: _uiColor),
+        child: Slider(value: _zoomLevel, min: 1.0, max: _maxZoom, onChanged: _setZoom),
+      ),
+      Row(children: [
+        Icon(Icons.timer, color: _uiColorDim, size: 16),
+        const SizedBox(width: 8),
+        Text('Časovač', style: TextStyle(color: _uiColorDim, fontSize: 12)),
+        const Spacer(),
         ...[0, 3, 5, 10].map((s) => GestureDetector(
           onTap: () => setState(() => _timerSeconds = s),
-          child: Container(margin: const EdgeInsets.only(left: 6), padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5), decoration: BoxDecoration(color: _timerSeconds == s ? _uiColor : _uiColor.withOpacity(0.1), borderRadius: BorderRadius.circular(8)), child: Text(s == 0 ? 'OFF' : '${s}s', style: TextStyle(color: _timerSeconds == s ? Colors.black : _uiColor, fontSize: 11, fontWeight: FontWeight.bold))),
+          child: Container(
+            margin: const EdgeInsets.only(left: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: _timerSeconds == s ? _uiColor : _uiColor.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              s == 0 ? 'OFF' : '${s}s',
+              style: TextStyle(color: _timerSeconds == s ? Colors.black : _uiColor, fontSize: 11, fontWeight: FontWeight.bold),
+            ),
+          ),
         )),
       ]),
     ]);
@@ -606,24 +666,60 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Container(
         width: double.infinity, padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(color: _goodForAstro ? Colors.green.withOpacity(0.15) : Colors.orange.withOpacity(0.15), borderRadius: BorderRadius.circular(12), border: Border.all(color: _goodForAstro ? Colors.green.withOpacity(0.4) : Colors.orange.withOpacity(0.4))),
+        decoration: BoxDecoration(
+          color: _goodForAstro ? Colors.green.withOpacity(0.15) : Colors.orange.withOpacity(0.15),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: _goodForAstro ? Colors.green.withOpacity(0.4) : Colors.orange.withOpacity(0.4)),
+        ),
         child: Row(children: [
           Text(_goodForAstro ? '✅' : '⚠️', style: const TextStyle(fontSize: 20)),
           const SizedBox(width: 10),
           Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(_goodForAstro ? 'Vhodné na pozorovanie' : 'Podmienky nie sú ideálne', style: TextStyle(color: _goodForAstro ? Colors.greenAccent : Colors.orange, fontSize: 13, fontWeight: FontWeight.bold)),
+            Text(
+              _goodForAstro ? 'Vhodné na pozorovanie' : 'Podmienky nie sú ideálne',
+              style: TextStyle(color: _goodForAstro ? Colors.greenAccent : Colors.orange, fontSize: 13, fontWeight: FontWeight.bold),
+            ),
             Text(_weatherDesc, style: const TextStyle(color: Colors.white54, fontSize: 11)),
           ]),
         ]),
       ),
       const SizedBox(height: 12),
       Row(children: [
-        Expanded(child: Container(padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: Colors.white.withOpacity(0.07), borderRadius: BorderRadius.circular(10)), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('🌡️', style: TextStyle(fontSize: 18)), const SizedBox(height: 4), const Text('Teplota', style: TextStyle(color: Colors.white38, fontSize: 10)), Text(_weatherTemp != null ? '${_weatherTemp!.toStringAsFixed(0)}°C' : '--', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold))]))),
+        Expanded(child: Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(color: Colors.white.withOpacity(0.07), borderRadius: BorderRadius.circular(10)),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('🌡️', style: TextStyle(fontSize: 18)),
+            const SizedBox(height: 4),
+            const Text('Teplota', style: TextStyle(color: Colors.white38, fontSize: 10)),
+            Text(_weatherTemp != null ? '${_weatherTemp!.toStringAsFixed(0)}°C' : '--', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+          ]),
+        )),
         const SizedBox(width: 12),
-        Expanded(child: Container(padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: Colors.white.withOpacity(0.07), borderRadius: BorderRadius.circular(10)), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('☁️', style: TextStyle(fontSize: 18)), const SizedBox(height: 4), const Text('Oblačnosť', style: TextStyle(color: Colors.white38, fontSize: 10)), Text(_weatherCloudCover != null ? '$_weatherCloudCover%' : '--', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold))]))),
+        Expanded(child: Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(color: Colors.white.withOpacity(0.07), borderRadius: BorderRadius.circular(10)),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('☁️', style: TextStyle(fontSize: 18)),
+            const SizedBox(height: 4),
+            const Text('Oblačnosť', style: TextStyle(color: Colors.white38, fontSize: 10)),
+            Text(_weatherCloudCover != null ? '$_weatherCloudCover%' : '--', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+          ]),
+        )),
       ]),
       const SizedBox(height: 12),
-      GestureDetector(onTap: _fetchWeather, child: Container(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8), decoration: BoxDecoration(color: Colors.white12, borderRadius: BorderRadius.circular(10)), child: const Row(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.refresh, color: Colors.white54, size: 14), SizedBox(width: 6), Text('Obnoviť', style: TextStyle(color: Colors.white54, fontSize: 12))]))),
+      GestureDetector(
+        onTap: _fetchWeather,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(color: Colors.white12, borderRadius: BorderRadius.circular(10)),
+          child: const Row(mainAxisSize: MainAxisSize.min, children: [
+            Icon(Icons.refresh, color: Colors.white54, size: 14),
+            SizedBox(width: 6),
+            Text('Obnoviť', style: TextStyle(color: Colors.white54, fontSize: 12)),
+          ]),
+        ),
+      ),
     ]);
   }
 
@@ -632,13 +728,20 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Text('Najbližších 30 dní', style: TextStyle(color: _uiColorDim, fontSize: 11)),
       const SizedBox(height: 10),
-      if (events.isEmpty) const Text('Žiadne úkazy', style: TextStyle(color: Colors.white54, fontSize: 12))
-      else ...events.map((e) => Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(color: Colors.white.withOpacity(0.06), borderRadius: BorderRadius.circular(10)),
-        child: Row(children: [Text(e['emoji']!, style: const TextStyle(fontSize: 18)), const SizedBox(width: 10), Expanded(child: Text(e['name']!, style: const TextStyle(color: Colors.white, fontSize: 13))), Text(e['date']!, style: const TextStyle(color: Colors.white38, fontSize: 12))]),
-      )),
+      if (events.isEmpty)
+        const Text('Žiadne úkazy', style: TextStyle(color: Colors.white54, fontSize: 12))
+      else
+        ...events.map((e) => Container(
+          margin: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(color: Colors.white.withOpacity(0.06), borderRadius: BorderRadius.circular(10)),
+          child: Row(children: [
+            Text(e['emoji']!, style: const TextStyle(fontSize: 18)),
+            const SizedBox(width: 10),
+            Expanded(child: Text(e['name']!, style: const TextStyle(color: Colors.white, fontSize: 13))),
+            Text(e['date']!, style: const TextStyle(color: Colors.white38, fontSize: 12)),
+          ]),
+        )),
     ]);
   }
 
@@ -646,13 +749,25 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
     if (!_isLocked) return const SizedBox();
     return Positioned(
       top: 0, left: 0, right: 0,
-      child: SafeArea(child: Padding(padding: const EdgeInsets.only(top: 100), child: Center(
-        child: GestureDetector(onTap: _unlockPosition, child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          decoration: BoxDecoration(color: Colors.amber.withOpacity(0.2), borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.amber, width: 1.5)),
-          child: const Row(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.lock, color: Colors.amber, size: 14), SizedBox(width: 6), Text('Expozícia zamknutá — ťukni pre odomknutie', style: TextStyle(color: Colors.amber, fontSize: 11, fontWeight: FontWeight.bold))]),
+      child: SafeArea(child: Padding(
+        padding: const EdgeInsets.only(top: 100),
+        child: Center(child: GestureDetector(
+          onTap: _unlockPosition,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.amber.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: Colors.amber, width: 1.5),
+            ),
+            child: const Row(mainAxisSize: MainAxisSize.min, children: [
+              Icon(Icons.lock, color: Colors.amber, size: 14),
+              SizedBox(width: 6),
+              Text('Expozícia zamknutá — ťukni pre odomknutie', style: TextStyle(color: Colors.amber, fontSize: 11, fontWeight: FontWeight.bold)),
+            ]),
+          ),
         )),
-      ))),
+      )),
     );
   }
 
@@ -668,7 +783,16 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
           final isSelected = i == _selectedCameraIndex;
           return GestureDetector(
             onTap: _isSwitchingCamera ? null : () => _switchCamera(i),
-            child: AnimatedContainer(duration: const Duration(milliseconds: 200), margin: const EdgeInsets.symmetric(horizontal: 3), padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: isSelected ? _uiColor : Colors.transparent, borderRadius: BorderRadius.circular(14)), child: Text(labels[i], style: TextStyle(color: isSelected ? Colors.black : _uiColor, fontSize: 13, fontWeight: FontWeight.bold))),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              margin: const EdgeInsets.symmetric(horizontal: 3),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: isSelected ? _uiColor : Colors.transparent,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Text(labels[i], style: TextStyle(color: isSelected ? Colors.black : _uiColor, fontSize: 13, fontWeight: FontWeight.bold)),
+            ),
           );
         })),
       )),
@@ -676,7 +800,11 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
   }
 
   Widget _buildCountdown() {
-    return Center(child: Container(width: 120, height: 120, decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.black.withOpacity(0.6), border: Border.all(color: _uiColor, width: 3)), child: Center(child: Text('$_timerCountdown', style: TextStyle(color: _uiColor, fontSize: 60, fontWeight: FontWeight.bold)))));
+    return Center(child: Container(
+      width: 120, height: 120,
+      decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.black.withOpacity(0.6), border: Border.all(color: _uiColor, width: 3)),
+      child: Center(child: Text('$_timerCountdown', style: TextStyle(color: _uiColor, fontSize: 60, fontWeight: FontWeight.bold))),
+    ));
   }
 
   Widget _buildSkyMap() {
@@ -684,8 +812,20 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
       right: 16, bottom: 140,
       child: Container(
         width: 110, height: 110,
-        decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.black.withOpacity(0.65), border: Border.all(color: _nightMode ? Colors.red.shade900 : (_sunMode ? Colors.orange.withOpacity(0.4) : Colors.white24), width: 1.5)),
-        child: CustomPaint(painter: SkyMapPainter(moonAzimuth: _moonPosition?.azimuth ?? 0, moonAltitude: _moonPosition?.altitude ?? -90, sunAzimuth: _sunPosition?.azimuth ?? 0, sunAltitude: _sunPosition?.altitude ?? -90, deviceAzimuth: _deviceAzimuth, nightMode: _nightMode, sunMode: _sunMode)),
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: Colors.black.withOpacity(0.65),
+          border: Border.all(color: _nightMode ? Colors.red.shade900 : (_sunMode ? Colors.orange.withOpacity(0.4) : Colors.white24), width: 1.5),
+        ),
+        child: CustomPaint(painter: SkyMapPainter(
+          moonAzimuth: _moonPosition?.azimuth ?? 0,
+          moonAltitude: _moonPosition?.altitude ?? -90,
+          sunAzimuth: _sunPosition?.azimuth ?? 0,
+          sunAltitude: _sunPosition?.altitude ?? -90,
+          deviceAzimuth: _deviceAzimuth,
+          nightMode: _nightMode,
+          sunMode: _sunMode,
+        )),
       ),
     );
   }
@@ -701,11 +841,30 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
         if (smoothedPos == null) return const SizedBox();
         return AnimatedBuilder(
           animation: Listenable.merge([_pulseAnimation, _rotateAnimation]),
-          builder: (_, __) => CustomPaint(painter: TargetCirclePainter(center: smoothedPos, radius: 60 * _pulseAnimation.value, rotation: _rotateAnimation.value, color: _targetColor, isLocked: _isLocked, isSun: _sunMode), child: const SizedBox.expand()),
+          builder: (_, __) => CustomPaint(
+            painter: TargetCirclePainter(
+              center: smoothedPos,
+              radius: 60 * _pulseAnimation.value,
+              rotation: _rotateAnimation.value,
+              color: _targetColor,
+              isLocked: _isLocked,
+              isSun: _sunMode,
+            ),
+            child: const SizedBox.expand(),
+          ),
         );
       } else {
         final angle = atan2(offset.dy, offset.dx);
-        return CustomPaint(painter: TargetArrowPainter(centerX: cx, centerY: cy, angle: angle, altitude: _targetAltitude ?? 0, color: _targetColor, isSun: _sunMode), child: const SizedBox.expand());
+        return CustomPaint(
+          painter: TargetArrowPainter(
+            centerX: cx, centerY: cy,
+            angle: angle,
+            altitude: _targetAltitude ?? 0,
+            color: _targetColor,
+            isSun: _sunMode,
+          ),
+          child: const SizedBox.expand(),
+        );
       }
     });
   }
@@ -723,7 +882,11 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 300),
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(color: _sunMode ? Colors.orange.withOpacity(0.2) : Colors.blue.withOpacity(0.15), borderRadius: BorderRadius.circular(16), border: Border.all(color: _sunMode ? Colors.orange : Colors.white38, width: 1.5)),
+                decoration: BoxDecoration(
+                  color: _sunMode ? Colors.orange.withOpacity(0.2) : Colors.blue.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: _sunMode ? Colors.orange : Colors.white38, width: 1.5),
+                ),
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
                   Text(_sunMode ? '☀️' : '🌙', style: const TextStyle(fontSize: 16)),
                   const SizedBox(width: 6),
@@ -734,7 +897,11 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
             Row(children: [
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(color: aboveHorizon ? (_sunMode ? Colors.orange.withOpacity(0.2) : Colors.blue.withOpacity(0.3)) : Colors.red.withOpacity(0.3), borderRadius: BorderRadius.circular(10), border: Border.all(color: aboveHorizon ? (_sunMode ? Colors.orange : Colors.blue) : Colors.red)),
+                decoration: BoxDecoration(
+                  color: aboveHorizon ? (_sunMode ? Colors.orange.withOpacity(0.2) : Colors.blue.withOpacity(0.3)) : Colors.red.withOpacity(0.3),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: aboveHorizon ? (_sunMode ? Colors.orange : Colors.blue) : Colors.red),
+                ),
                 child: Text(aboveHorizon ? '↑ NAD' : '↓ POD', style: TextStyle(color: _uiColorDim, fontSize: 10, fontWeight: FontWeight.bold)),
               ),
               const SizedBox(width: 6),
@@ -742,7 +909,11 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
                 onTap: () => _openPanel(0),
                 child: Container(
                   padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(color: _showPanel ? _uiColor.withOpacity(0.3) : Colors.transparent, borderRadius: BorderRadius.circular(8), border: Border.all(color: _showPanel ? _uiColor.withOpacity(0.6) : Colors.white38)),
+                  decoration: BoxDecoration(
+                    color: _showPanel ? _uiColor.withOpacity(0.3) : Colors.transparent,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: _showPanel ? _uiColor.withOpacity(0.6) : Colors.white38),
+                  ),
                   child: Icon(Icons.tune, color: _showPanel ? _uiColor : Colors.white, size: 18),
                 ),
               ),
@@ -771,7 +942,10 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(color: _bgColor, borderRadius: BorderRadius.circular(8), border: Border.all(color: _uiColor.withOpacity(0.2))),
-      child: RichText(text: TextSpan(children: [TextSpan(text: '$label ', style: TextStyle(color: _uiColorDim, fontSize: 10)), TextSpan(text: value, style: TextStyle(color: _uiColor, fontSize: 11, fontWeight: FontWeight.bold))])),
+      child: RichText(text: TextSpan(children: [
+        TextSpan(text: '$label ', style: TextStyle(color: _uiColorDim, fontSize: 10)),
+        TextSpan(text: value, style: TextStyle(color: _uiColor, fontSize: 11, fontWeight: FontWeight.bold)),
+      ])),
     );
   }
 
@@ -784,17 +958,30 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
         padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 32),
         child: Column(children: [
           Text(
-            _timerCountdown > 0 ? '⏱️ Fotím za $_timerCountdown s...'
-                : _isLocked ? '🔒 Expozícia zamknutá — ťukni pre odomknutie'
-                : inFrame ? '👆 Ťukni na $emoji pre zamknutie expozície'
-                : _targetAboveHorizon ? '👆 Namiery telefón podľa šípky'
-                : '😔 ${_sunMode ? "Slnko" : "Mesiac"} je pod horizontom',
+            _timerCountdown > 0
+                ? '⏱️ Fotím za $_timerCountdown s...'
+                : _isLocked
+                    ? '🔒 Expozícia zamknutá — ťukni pre odomknutie'
+                    : inFrame
+                        ? '👆 Ťukni na $emoji pre zamknutie expozície'
+                        : _targetAboveHorizon
+                            ? '👆 Namiery telefón podľa šípky'
+                            : '😔 ${_sunMode ? "Slnko" : "Mesiac"} je pod horizontom',
             textAlign: TextAlign.center,
-            style: TextStyle(color: _isLocked ? Colors.amber : inFrame ? Colors.greenAccent : _uiColorDim, fontSize: 13, fontWeight: _isLocked || inFrame ? FontWeight.bold : FontWeight.normal),
+            style: TextStyle(
+              color: _isLocked ? Colors.amber : inFrame ? Colors.greenAccent : _uiColorDim,
+              fontSize: 13,
+              fontWeight: _isLocked || inFrame ? FontWeight.bold : FontWeight.normal,
+            ),
           ),
           const SizedBox(height: 16),
           Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-            if (_timerSeconds > 0) Container(margin: const EdgeInsets.only(right: 20), padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: _bgColor, borderRadius: BorderRadius.circular(10), border: Border.all(color: _uiColor.withOpacity(0.3))), child: Text('⏱ ${_timerSeconds}s', style: TextStyle(color: _uiColor, fontSize: 12))),
+            if (_timerSeconds > 0) Container(
+              margin: const EdgeInsets.only(right: 20),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(color: _bgColor, borderRadius: BorderRadius.circular(10), border: Border.all(color: _uiColor.withOpacity(0.3))),
+              child: Text('⏱ ${_timerSeconds}s', style: TextStyle(color: _uiColor, fontSize: 12)),
+            ),
             GestureDetector(
               onTap: _timerCountdown > 0 ? null : _startTimerAndShoot,
               child: AnimatedContainer(
@@ -802,14 +989,32 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
                 width: 80, height: 80,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: _isTakingPhoto || _timerCountdown > 0 ? _uiColor.withOpacity(0.3) : _isLocked ? Colors.amber : inFrame ? _uiColor : _uiColor.withOpacity(0.4),
-                  border: Border.all(color: _isLocked ? Colors.amber : inFrame ? _uiColor : _uiColor.withOpacity(0.4), width: 3),
-                  boxShadow: _isLocked || inFrame ? [BoxShadow(color: (_isLocked ? Colors.amber : _uiColor).withOpacity(0.4), blurRadius: 20, spreadRadius: 5)] : null,
+                  color: _isTakingPhoto || _timerCountdown > 0
+                      ? _uiColor.withOpacity(0.3)
+                      : _isLocked
+                          ? Colors.amber
+                          : inFrame
+                              ? _uiColor
+                              : _uiColor.withOpacity(0.4),
+                  border: Border.all(
+                    color: _isLocked ? Colors.amber : inFrame ? _uiColor : _uiColor.withOpacity(0.4),
+                    width: 3,
+                  ),
+                  boxShadow: _isLocked || inFrame
+                      ? [BoxShadow(color: (_isLocked ? Colors.amber : _uiColor).withOpacity(0.4), blurRadius: 20, spreadRadius: 5)]
+                      : null,
                 ),
-                child: _isTakingPhoto ? Center(child: CircularProgressIndicator(color: _uiColor)) : Icon(Icons.camera, size: 36, color: _isLocked || inFrame ? Colors.black : _uiColor.withOpacity(0.5)),
+                child: _isTakingPhoto
+                    ? Center(child: CircularProgressIndicator(color: _uiColor))
+                    : Icon(Icons.camera, size: 36, color: _isLocked || inFrame ? Colors.black : _uiColor.withOpacity(0.5)),
               ),
             ),
-            if (_zoomLevel > 1.0) Container(margin: const EdgeInsets.only(left: 20), padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6), decoration: BoxDecoration(color: _bgColor, borderRadius: BorderRadius.circular(10), border: Border.all(color: _uiColor.withOpacity(0.3))), child: Text('🔭 ${_zoomLevel.toStringAsFixed(1)}x', style: TextStyle(color: _uiColor, fontSize: 12))),
+            if (_zoomLevel > 1.0) Container(
+              margin: const EdgeInsets.only(left: 20),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(color: _bgColor, borderRadius: BorderRadius.circular(10), border: Border.all(color: _uiColor.withOpacity(0.3))),
+              child: Text('🔭 ${_zoomLevel.toStringAsFixed(1)}x', style: TextStyle(color: _uiColor, fontSize: 12)),
+            ),
           ]),
         ]),
       )),
@@ -846,7 +1051,9 @@ class SkyMapPainter extends CustomPainter {
     final cx = size.width / 2, cy = size.height / 2, r = size.width / 2 - 4;
     canvas.drawCircle(Offset(cx, cy), r, Paint()..color = nightMode ? Colors.red.shade900 : const Color(0xFF0A0A2A));
     canvas.drawCircle(Offset(cx, cy), r * 0.95, Paint()..color = Colors.white.withOpacity(0.12)..style = PaintingStyle.stroke..strokeWidth = 0.5);
-    for (double alt in [30, 60]) { canvas.drawCircle(Offset(cx, cy), r * (1 - alt / 90) * 0.95, Paint()..color = Colors.white.withOpacity(0.1)..style = PaintingStyle.stroke..strokeWidth = 0.5); }
+    for (double alt in [30, 60]) {
+      canvas.drawCircle(Offset(cx, cy), r * (1 - alt / 90) * 0.95, Paint()..color = Colors.white.withOpacity(0.1)..style = PaintingStyle.stroke..strokeWidth = 0.5);
+    }
     final dirPaint = TextPainter(textDirection: TextDirection.ltr);
     for (var entry in {'N': 0.0, 'E': 90.0, 'S': 180.0, 'W': 270.0}.entries) {
       final angle = (entry.value - deviceAzimuth) * pi / 180;
@@ -856,7 +1063,10 @@ class SkyMapPainter extends CustomPainter {
       dirPaint.paint(canvas, Offset(dx - dirPaint.width / 2, dy - dirPaint.height / 2));
     }
     final fovAngle = 30.0 * pi / 180;
-    canvas.drawPath(Path()..moveTo(cx, cy)..arcTo(Rect.fromCircle(center: Offset(cx, cy), radius: r * 0.9), -pi / 2 - fovAngle / 2, fovAngle, false)..close(), Paint()..color = Colors.white.withOpacity(0.08));
+    canvas.drawPath(
+      Path()..moveTo(cx, cy)..arcTo(Rect.fromCircle(center: Offset(cx, cy), radius: r * 0.9), -pi / 2 - fovAngle / 2, fovAngle, false)..close(),
+      Paint()..color = Colors.white.withOpacity(0.08),
+    );
     if (moonAltitude > -10) {
       final moonAngle = (moonAzimuth - deviceAzimuth) * pi / 180;
       final moonR = r * (1 - (moonAltitude.clamp(-10.0, 90.0) + 10) / 100) * 0.9;
@@ -903,7 +1113,10 @@ class TargetCirclePainter extends CustomPainter {
     canvas.drawLine(Offset(center.dx + radius - 10, center.dy), Offset(center.dx + radius + 10, center.dy), lp);
     canvas.drawCircle(center, 3, Paint()..color = color.withOpacity(0.6)..style = PaintingStyle.fill);
     final label = isLocked ? '🔒 ${isSun ? "SLNKO" : "MESIAC"}' : (isSun ? '☀️ SLNKO' : '🌙 MESIAC');
-    final tp = TextPainter(text: TextSpan(text: label, style: TextStyle(color: color.withOpacity(0.9), fontSize: 12, fontWeight: FontWeight.bold, shadows: [Shadow(color: Colors.black, blurRadius: 4)])), textDirection: TextDirection.ltr)..layout();
+    final tp = TextPainter(
+      text: TextSpan(text: label, style: TextStyle(color: color.withOpacity(0.9), fontSize: 12, fontWeight: FontWeight.bold, shadows: [Shadow(color: Colors.black, blurRadius: 4)])),
+      textDirection: TextDirection.ltr,
+    )..layout();
     tp.paint(canvas, Offset(center.dx - tp.width / 2, center.dy + radius + 14));
   }
   @override
@@ -928,7 +1141,10 @@ class TargetArrowPainter extends CustomPainter {
     final emoji = isSun ? '☀️' : '🌙';
     final tp = TextPainter(text: TextSpan(text: emoji, style: const TextStyle(fontSize: 16)), textDirection: TextDirection.ltr)..layout();
     tp.paint(canvas, Offset(ax - tp.width / 2, ay - tp.height / 2 - 20));
-    final altTp = TextPainter(text: TextSpan(text: '${altitude.toStringAsFixed(0)}°', style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold)), textDirection: TextDirection.ltr)..layout();
+    final altTp = TextPainter(
+      text: TextSpan(text: '${altitude.toStringAsFixed(0)}°', style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold)),
+      textDirection: TextDirection.ltr,
+    )..layout();
     altTp.paint(canvas, Offset(ax - altTp.width / 2, ay + 14));
   }
   @override
