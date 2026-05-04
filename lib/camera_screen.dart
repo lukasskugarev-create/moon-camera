@@ -802,11 +802,26 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
   }
 
   Widget _buildCountdown() {
-    return Center(child: Container(
-      width: 120, height: 120,
-      decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.black.withOpacity(0.6), border: Border.all(color: _uiColor, width: 3)),
-      child: Center(child: Text('$_timerCountdown', style: TextStyle(color: _uiColor, fontSize: 60, fontWeight: FontWeight.bold))),
-    ));
+    final progress = _timerSeconds > 0 ? _timerCountdown / _timerSeconds : 0.0;
+    return Center(
+      child: TweenAnimationBuilder<double>(
+        tween: Tween(begin: progress + (1 / _timerSeconds), end: progress),
+        duration: const Duration(milliseconds: 900),
+        curve: Curves.easeInOut,
+        builder: (_, animProgress, __) {
+          return SizedBox(
+            width: 160, height: 160,
+            child: CustomPaint(
+              painter: _CountdownPainter(
+                progress: animProgress,
+                color: _uiColor,
+                countdown: _timerCountdown,
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 
   Widget _buildSkyMap() {
@@ -1161,4 +1176,86 @@ class TargetArrowPainter extends CustomPainter {
   }
   @override
   bool shouldRepaint(TargetArrowPainter old) => true;
+}
+
+class _CountdownPainter extends CustomPainter {
+  final double progress; // 1.0 = plný kruh, 0.0 = prázdny
+  final Color color;
+  final int countdown;
+
+  _CountdownPainter({required this.progress, required this.color, required this.countdown});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final cx = size.width / 2, cy = size.height / 2;
+    final radius = size.width / 2 - 8;
+
+    // Tmavé pozadie kruhu
+    canvas.drawCircle(
+      Offset(cx, cy), radius,
+      Paint()..color = Colors.black.withOpacity(0.75),
+    );
+
+    // Tichý kruh (pozadie oblúka)
+    canvas.drawCircle(
+      Offset(cx, cy), radius,
+      Paint()
+        ..color = color.withOpacity(0.15)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 8,
+    );
+
+    // Svietiaci oblúk – progress
+    canvas.drawArc(
+      Rect.fromCircle(center: Offset(cx, cy), radius: radius),
+      -pi / 2,
+      2 * pi * progress,
+      false,
+      Paint()
+        ..color = color
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 8
+        ..strokeCap = StrokeCap.round
+        ..maskFilter = MaskFilter.blur(BlurStyle.normal, 4),
+    );
+    // Ostrá vrstva oblúka nad blur
+    canvas.drawArc(
+      Rect.fromCircle(center: Offset(cx, cy), radius: radius),
+      -pi / 2,
+      2 * pi * progress,
+      false,
+      Paint()
+        ..color = color
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 5
+        ..strokeCap = StrokeCap.round,
+    );
+
+    // Číslo v strede
+    final tp = TextPainter(
+      text: TextSpan(
+        text: '$countdown',
+        style: TextStyle(
+          color: color,
+          fontSize: 64,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    tp.paint(canvas, Offset(cx - tp.width / 2, cy - tp.height / 2));
+
+    // Malý popis pod číslom
+    final subTp = TextPainter(
+      text: TextSpan(
+        text: 'sekúnd',
+        style: TextStyle(color: color.withOpacity(0.5), fontSize: 13, letterSpacing: 1),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    subTp.paint(canvas, Offset(cx - subTp.width / 2, cy + tp.height / 2 - 4));
+  }
+
+  @override
+  bool shouldRepaint(_CountdownPainter old) => old.progress != progress || old.countdown != countdown;
 }
