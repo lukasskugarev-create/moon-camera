@@ -3,27 +3,22 @@ workflows:
     name: iOS Workflow
     instance_type: mac_mini_m2
     environment:
-      flutter: 3.22.3
+      flutter: 3.19.6
       xcode: 16.2
     scripts:
       - name: Get Flutter packages
         script: flutter pub get
       - name: Build iOS
-        script: |
-          flutter build ipa --release --no-codesign || true
-          find build -name "*.ipa" -o -name "Runner.app" -type d 2>/dev/null
+        script: flutter build ios --release --no-codesign || true
       - name: Create IPA
         script: |
           APP_PATH=$(find build/ios -name "Runner.app" -type d | head -1)
           echo "App path: $APP_PATH"
           if [ -z "$APP_PATH" ]; then
-            echo "Runner.app not found!"
-            find build -type d -name "*.app" 2>/dev/null || echo "No .app found"
             exit 1
           fi
           mkdir -p Payload
           cp -r "$APP_PATH" Payload/
           zip -r app.ipa Payload/
-          echo "IPA created!"
     artifacts:
       - app.ipa
