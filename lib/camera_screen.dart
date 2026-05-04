@@ -297,6 +297,8 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
   void _onTapScreen(TapUpDetails details) {
     if (_showPanel) { _closePanel(); return; }
     if (_isLocked) { _unlockPosition(); return; }
+    // Zamknúť len keď je terč v zábere
+    if (!_isTargetInFrame()) return;
     setState(() => _isLocked = true);
     _lockAnimController.forward(from: 0);
     HapticFeedback.mediumImpact();
@@ -975,47 +977,57 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
             ),
           ),
           const SizedBox(height: 16),
-          Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-            if (_timerSeconds > 0) Container(
-              margin: const EdgeInsets.only(right: 20),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(color: _bgColor, borderRadius: BorderRadius.circular(10), border: Border.all(color: _uiColor.withOpacity(0.3))),
-              child: Text('⏱ ${_timerSeconds}s', style: TextStyle(color: _uiColor, fontSize: 12)),
-            ),
-            GestureDetector(
-              onTap: _timerCountdown > 0 ? null : _startTimerAndShoot,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                width: 80, height: 80,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: _isTakingPhoto || _timerCountdown > 0
-                      ? _uiColor.withOpacity(0.3)
-                      : _isLocked
-                          ? Colors.amber
-                          : inFrame
-                              ? _uiColor
-                              : _uiColor.withOpacity(0.4),
-                  border: Border.all(
-                    color: _isLocked ? Colors.amber : inFrame ? _uiColor : _uiColor.withOpacity(0.4),
-                    width: 3,
+          SizedBox(
+            height: 80,
+            child: Stack(alignment: Alignment.center, children: [
+              // Tlačidlo fotky – vždy presne v strede
+              GestureDetector(
+                onTap: _timerCountdown > 0 ? null : _startTimerAndShoot,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  width: 80, height: 80,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: _isTakingPhoto || _timerCountdown > 0
+                        ? _uiColor.withOpacity(0.3)
+                        : _isLocked
+                            ? Colors.amber
+                            : inFrame
+                                ? _uiColor
+                                : _uiColor.withOpacity(0.4),
+                    border: Border.all(
+                      color: _isLocked ? Colors.amber : inFrame ? _uiColor : _uiColor.withOpacity(0.4),
+                      width: 3,
+                    ),
+                    boxShadow: _isLocked || inFrame
+                        ? [BoxShadow(color: (_isLocked ? Colors.amber : _uiColor).withOpacity(0.4), blurRadius: 20, spreadRadius: 5)]
+                        : null,
                   ),
-                  boxShadow: _isLocked || inFrame
-                      ? [BoxShadow(color: (_isLocked ? Colors.amber : _uiColor).withOpacity(0.4), blurRadius: 20, spreadRadius: 5)]
-                      : null,
+                  child: _isTakingPhoto
+                      ? Center(child: CircularProgressIndicator(color: _uiColor))
+                      : Icon(Icons.camera, size: 36, color: _isLocked || inFrame ? Colors.black : _uiColor.withOpacity(0.5)),
                 ),
-                child: _isTakingPhoto
-                    ? Center(child: CircularProgressIndicator(color: _uiColor))
-                    : Icon(Icons.camera, size: 36, color: _isLocked || inFrame ? Colors.black : _uiColor.withOpacity(0.5)),
               ),
-            ),
-            if (_zoomLevel > 1.0) Container(
-              margin: const EdgeInsets.only(left: 20),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(color: _bgColor, borderRadius: BorderRadius.circular(10), border: Border.all(color: _uiColor.withOpacity(0.3))),
-              child: Text('🔭 ${_zoomLevel.toStringAsFixed(1)}x', style: TextStyle(color: _uiColor, fontSize: 12)),
-            ),
-          ]),
+              // Timer badge – vľavo
+              if (_timerSeconds > 0) Positioned(
+                left: 0,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(color: _bgColor, borderRadius: BorderRadius.circular(10), border: Border.all(color: _uiColor.withOpacity(0.3))),
+                  child: Text('⏱ ${_timerSeconds}s', style: TextStyle(color: _uiColor, fontSize: 12)),
+                ),
+              ),
+              // Zoom badge – vpravo
+              if (_zoomLevel > 1.0) Positioned(
+                right: 0,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(color: _bgColor, borderRadius: BorderRadius.circular(10), border: Border.all(color: _uiColor.withOpacity(0.3))),
+                  child: Text('🔭 ${_zoomLevel.toStringAsFixed(1)}x', style: TextStyle(color: _uiColor, fontSize: 12)),
+                ),
+              ),
+            ]),
+          ),
         ]),
       )),
     );
