@@ -42,9 +42,11 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
   String _statusMessage = 'Inicializujem...';
   bool _sunMode = false;
   bool _showGrid = false;
-  bool _showWeather = false;
-  bool _showEvents = false;
   bool _isLocked = false;
+
+  // Unified panel
+  bool _showPanel = false;
+  int _panelTab = 0; // 0=nastavenia, 1=pocasie, 2=ukazy
 
   // Weather
   double? _weatherTemp;
@@ -57,7 +59,6 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
   double _maxExposure = 4.0;
   double _zoomLevel = 1.0;
   double _maxZoom = 8.0;
-  bool _showControls = false;
   bool _nightMode = false;
 
   int _timerSeconds = 0;
@@ -71,9 +72,11 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
   late AnimationController _pulseController;
   late AnimationController _rotateController;
   late AnimationController _lockAnimController;
+  late AnimationController _panelAnimController;
   late Animation<double> _pulseAnimation;
   late Animation<double> _rotateAnimation;
   late Animation<double> _lockAnimation;
+  late Animation<double> _panelAnimation;
   Timer? _positionUpdateTimer;
 
   double? get _targetAzimuth => _sunMode ? _sunPosition?.azimuth : _moonPosition?.azimuth;
@@ -103,9 +106,11 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
     _pulseController = AnimationController(duration: const Duration(seconds: 2), vsync: this)..repeat(reverse: true);
     _rotateController = AnimationController(duration: const Duration(seconds: 20), vsync: this)..repeat();
     _lockAnimController = AnimationController(duration: const Duration(milliseconds: 400), vsync: this);
+    _panelAnimController = AnimationController(duration: const Duration(milliseconds: 350), vsync: this);
     _pulseAnimation = Tween<double>(begin: 0.92, end: 1.08).animate(CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut));
     _rotateAnimation = Tween<double>(begin: 0, end: 2 * pi).animate(_rotateController);
     _lockAnimation = Tween<double>(begin: 0, end: 1).animate(CurvedAnimation(parent: _lockAnimController, curve: Curves.elasticOut));
+    _panelAnimation = CurvedAnimation(parent: _panelAnimController, curve: Curves.easeOutCubic);
     _initialize();
   }
 
@@ -210,13 +215,10 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
         final current = data['current'];
-        final temp = current['temperature_2m']?.toDouble();
-        final cloud = current['cloudcover']?.toInt();
-        final code = current['weathercode']?.toInt() ?? 0;
         setState(() {
-          _weatherTemp = temp;
-          _weatherCloudCover = cloud;
-          _weatherDesc = _weatherCodeToDesc(code);
+          _weatherTemp = current['temperature_2m']?.toDouble();
+          _weatherCloudCover = current['cloudcover']?.toInt();
+          _weatherDesc = _weatherCodeToDesc(current['weathercode']?.toInt() ?? 0);
           _loadingWeather = false;
         });
       }
@@ -255,6 +257,16 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
     HapticFeedback.lightImpact();
   }
 
+  void _openPanel(int tab) {
+    setState(() { _showPanel = true; _panelTab = tab; });
+    _panelAnimController.forward(from: 0);
+    HapticFeedback.lightImpact();
+  }
+
+  void _closePanel() {
+    _panelAnimController.reverse().then((_) { if (mounted) setState(() => _showPanel = false); });
+  }
+
   Offset? _getScreenOffset() {
     if (_targetAzimuth == null || _targetAltitude == null) return null;
     double azDiff = _targetAzimuth! - _deviceAzimuth;
@@ -283,6 +295,7 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
   }
 
   void _onTapScreen(TapUpDetails details) {
+    if (_showPanel) { _closePanel(); return; }
     if (_isLocked) { _unlockPosition(); return; }
     setState(() => _isLocked = true);
     _lockAnimController.forward(from: 0);
@@ -376,25 +389,19 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
     return '🌘 Ubúdajúci';
   }
 
-  // Astronomical events for next 30 days
   List<Map<String, String>> _getUpcomingEvents() {
     final events = <Map<String, String>>[];
     final now = DateTime.now();
-
-    // Moon phases
     final cycleStart = now.difference(DateTime(now.year, 1, 1)).inDays % 29.5;
     final daysToNextPhase = (7.4 - (cycleStart % 7.4)) % 7.4;
-
     final phaseNames = ['🌑 Nov mesiaca', '🌓 Prvá štvrtina', '🌕 Spln mesiaca', '🌗 Posledná štvrtina'];
     for (int i = 0; i < 4; i++) {
       final days = (daysToNextPhase + i * 7.4).round();
       if (days <= 30) {
         final date = now.add(Duration(days: days));
-        events.add({'emoji': phaseNames[i].split(' ')[0], 'name': phaseNames[i].substring(2), 'date': '${date.day}.${date.month}.${date.year}'});
+        events.add({'emoji': phaseNames[i].split(' ')[0], 'name': phaseNames[i].substring(2), 'date': '${date.day}.${date.month}.'});
       }
     }
-
-    // Notable meteor showers
     final showers = [
       {'name': 'Perseidy', 'emoji': '☄️', 'month': 8, 'day': 12},
       {'name': 'Leonidy', 'emoji': '☄️', 'month': 11, 'day': 17},
@@ -406,10 +413,9 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
       final showerDate = DateTime(now.year, shower['month'] as int, shower['day'] as int);
       final diff = showerDate.difference(now).inDays;
       if (diff >= 0 && diff <= 30) {
-        events.add({'emoji': shower['emoji'] as String, 'name': shower['name'] as String, 'date': '${showerDate.day}.${showerDate.month}.${showerDate.year}'});
+        events.add({'emoji': shower['emoji'] as String, 'name': shower['name'] as String, 'date': '${showerDate.day}.${showerDate.month}.'});
       }
     }
-
     events.sort((a, b) => a['date']!.compareTo(b['date']!));
     return events.take(5).toList();
   }
@@ -461,6 +467,7 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
     _pulseController.dispose();
     _rotateController.dispose();
     _lockAnimController.dispose();
+    _panelAnimController.dispose();
     _controller?.dispose();
     super.dispose();
   }
@@ -481,15 +488,13 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
           if (_isSwitchingCamera) Container(color: Colors.black.withOpacity(0.6), child: Center(child: CircularProgressIndicator(color: _uiColor))),
           if (_nightMode) Container(color: Colors.red.withOpacity(0.08)),
           if (_sunMode) Container(color: Colors.orange.withOpacity(0.03)),
-          if (_showGrid) _buildGrid(),
+          if (_showGrid) CustomPaint(painter: GridPainter(color: _uiColor.withOpacity(0.3)), child: const SizedBox.expand()),
           _buildOverlay(),
           _buildTopBar(),
           _buildSkyMap(),
           _buildLensSwitcher(),
           _buildLockIndicator(),
-          if (_showWeather) _buildWeatherPanel(),
-          if (_showEvents) _buildEventsPanel(),
-          if (_showControls) _buildControlsPanel(),
+          if (_showPanel) _buildUnifiedPanel(),
           _buildBottomControls(),
           if (_timerCountdown > 0) _buildCountdown(),
         ]),
@@ -497,83 +502,144 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
     );
   }
 
-  // === GRID ===
-  Widget _buildGrid() {
-    return CustomPaint(
-      painter: GridPainter(color: _uiColor.withOpacity(0.3)),
-      child: const SizedBox.expand(),
-    );
-  }
-
-  // === WEATHER PANEL ===
-  Widget _buildWeatherPanel() {
+  Widget _buildUnifiedPanel() {
     return Positioned(
-      top: 160, left: 16, right: 16,
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.8),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: _goodForAstro ? Colors.green.withOpacity(0.5) : Colors.orange.withOpacity(0.5)),
-        ),
-        child: _loadingWeather
-            ? const Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)))
-            : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Row(children: [
-                  const Text('🌤️ Počasie', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
-                  const Spacer(),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: _goodForAstro ? Colors.green.withOpacity(0.2) : Colors.orange.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(8),
+      left: 0, right: 0, bottom: 0,
+      child: AnimatedBuilder(
+        animation: _panelAnimation,
+        builder: (_, __) => Transform.translate(
+          offset: Offset(0, 420 * (1 - _panelAnimation.value)),
+          child: GestureDetector(
+            onTap: () {},
+            child: Container(
+              decoration: BoxDecoration(
+                color: _nightMode ? Colors.red.shade900.withOpacity(0.95) : Colors.black.withOpacity(0.92),
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+                border: Border.all(color: _uiColor.withOpacity(0.2)),
+              ),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Padding(
+                  padding: const EdgeInsets.only(top: 12, bottom: 4),
+                  child: Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2))),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: Row(children: [
+                    _panelTabBtn(0, Icons.tune, 'Nastavenia'),
+                    const SizedBox(width: 8),
+                    _panelTabBtn(1, Icons.cloud, 'Počasie'),
+                    const SizedBox(width: 8),
+                    _panelTabBtn(2, Icons.event, 'Úkazy'),
+                    const Spacer(),
+                    GestureDetector(
+                      onTap: _closePanel,
+                      child: Container(padding: const EdgeInsets.all(6), decoration: BoxDecoration(color: Colors.white12, borderRadius: BorderRadius.circular(8)), child: const Icon(Icons.close, color: Colors.white54, size: 16)),
                     ),
-                    child: Text(_goodForAstro ? '✅ Vhodné na pozorovanie' : '⚠️ Oblačno', style: TextStyle(color: _goodForAstro ? Colors.greenAccent : Colors.orange, fontSize: 10, fontWeight: FontWeight.bold)),
-                  ),
-                ]),
-                const SizedBox(height: 8),
-                Row(children: [
-                  Text(_weatherDesc, style: const TextStyle(color: Colors.white70, fontSize: 12)),
-                  const SizedBox(width: 12),
-                  if (_weatherTemp != null) Text('${_weatherTemp!.toStringAsFixed(0)}°C', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold)),
-                  const SizedBox(width: 12),
-                  if (_weatherCloudCover != null) Text('☁️ ${_weatherCloudCover}%', style: const TextStyle(color: Colors.white70, fontSize: 12)),
-                ]),
+                  ]),
+                ),
+                const Divider(color: Colors.white12, height: 1),
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: _panelTab == 0 ? _buildSettingsTab() : _panelTab == 1 ? _buildWeatherTab() : _buildEventsTab(),
+                ),
+                SizedBox(height: MediaQuery.of(context).padding.bottom + 8),
               ]),
+            ),
+          ),
+        ),
       ),
     );
   }
 
-  // === EVENTS PANEL ===
-  Widget _buildEventsPanel() {
-    final events = _getUpcomingEvents();
-    return Positioned(
-      top: _showWeather ? 260 : 160, left: 16, right: 16,
-      child: Container(
-        padding: const EdgeInsets.all(14),
+  Widget _panelTabBtn(int index, IconData icon, String label) {
+    final active = _panelTab == index;
+    return GestureDetector(
+      onTap: () => setState(() => _panelTab = index),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
         decoration: BoxDecoration(
-          color: Colors.black.withOpacity(0.8),
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.purple.withOpacity(0.4)),
+          color: active ? _uiColor.withOpacity(0.2) : Colors.transparent,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: active ? _uiColor.withOpacity(0.6) : Colors.white12),
         ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('🗓️ Nadchádzajúce úkazy', style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          if (events.isEmpty)
-            const Text('Žiadne úkazy v najbližších 30 dňoch', style: TextStyle(color: Colors.white54, fontSize: 11))
-          else
-            ...events.map((e) => Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: Row(children: [
-                Text(e['emoji']!, style: const TextStyle(fontSize: 16)),
-                const SizedBox(width: 8),
-                Expanded(child: Text(e['name']!, style: const TextStyle(color: Colors.white, fontSize: 12))),
-                Text(e['date']!, style: const TextStyle(color: Colors.white54, fontSize: 11)),
-              ]),
-            )),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, color: active ? _uiColor : Colors.white38, size: 14),
+          const SizedBox(width: 5),
+          Text(label, style: TextStyle(color: active ? _uiColor : Colors.white38, fontSize: 12, fontWeight: active ? FontWeight.bold : FontWeight.normal)),
         ]),
       ),
     );
+  }
+
+  Widget _buildSettingsTab() {
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(children: [
+        Icon(Icons.grid_on, color: _uiColorDim, size: 16), const SizedBox(width: 8),
+        Text('Mriežka', style: const TextStyle(color: Colors.white70, fontSize: 13)), const Spacer(),
+        Switch(value: _showGrid, onChanged: (v) => setState(() => _showGrid = v), activeColor: _uiColor),
+      ]),
+      const SizedBox(height: 8),
+      Row(children: [
+        Icon(Icons.bedtime, color: _uiColorDim, size: 16), const SizedBox(width: 8),
+        Text('Nočný režim', style: const TextStyle(color: Colors.white70, fontSize: 13)), const Spacer(),
+        Switch(value: _nightMode, onChanged: (v) => setState(() => _nightMode = v), activeColor: Colors.red.shade400),
+      ]),
+      const SizedBox(height: 12),
+      Row(children: [Icon(Icons.brightness_6, color: _uiColorDim, size: 16), const SizedBox(width: 8), Text('Expozícia', style: TextStyle(color: _uiColorDim, fontSize: 12)), const Spacer(), Text(_exposureOffset.toStringAsFixed(1), style: TextStyle(color: _uiColor, fontSize: 12))]),
+      SliderTheme(data: SliderThemeData(activeTrackColor: _uiColor, inactiveTrackColor: _uiColor.withOpacity(0.2), thumbColor: _uiColor), child: Slider(value: _exposureOffset, min: _minExposure, max: _maxExposure, divisions: 16, onChanged: _setExposure)),
+      Row(children: [Icon(Icons.zoom_in, color: _uiColorDim, size: 16), const SizedBox(width: 8), Text('Zoom', style: TextStyle(color: _uiColorDim, fontSize: 12)), const Spacer(), Text('${_zoomLevel.toStringAsFixed(1)}x', style: TextStyle(color: _uiColor, fontSize: 12))]),
+      SliderTheme(data: SliderThemeData(activeTrackColor: _uiColor, inactiveTrackColor: _uiColor.withOpacity(0.2), thumbColor: _uiColor), child: Slider(value: _zoomLevel, min: 1.0, max: _maxZoom, onChanged: _setZoom)),
+      Row(children: [
+        Icon(Icons.timer, color: _uiColorDim, size: 16), const SizedBox(width: 8),
+        Text('Časovač', style: TextStyle(color: _uiColorDim, fontSize: 12)), const Spacer(),
+        ...[0, 3, 5, 10].map((s) => GestureDetector(
+          onTap: () => setState(() => _timerSeconds = s),
+          child: Container(margin: const EdgeInsets.only(left: 6), padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5), decoration: BoxDecoration(color: _timerSeconds == s ? _uiColor : _uiColor.withOpacity(0.1), borderRadius: BorderRadius.circular(8)), child: Text(s == 0 ? 'OFF' : '${s}s', style: TextStyle(color: _timerSeconds == s ? Colors.black : _uiColor, fontSize: 11, fontWeight: FontWeight.bold))),
+        )),
+      ]),
+    ]);
+  }
+
+  Widget _buildWeatherTab() {
+    if (_loadingWeather) return const Center(child: Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)));
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Container(
+        width: double.infinity, padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(color: _goodForAstro ? Colors.green.withOpacity(0.15) : Colors.orange.withOpacity(0.15), borderRadius: BorderRadius.circular(12), border: Border.all(color: _goodForAstro ? Colors.green.withOpacity(0.4) : Colors.orange.withOpacity(0.4))),
+        child: Row(children: [
+          Text(_goodForAstro ? '✅' : '⚠️', style: const TextStyle(fontSize: 20)),
+          const SizedBox(width: 10),
+          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(_goodForAstro ? 'Vhodné na pozorovanie' : 'Podmienky nie sú ideálne', style: TextStyle(color: _goodForAstro ? Colors.greenAccent : Colors.orange, fontSize: 13, fontWeight: FontWeight.bold)),
+            Text(_weatherDesc, style: const TextStyle(color: Colors.white54, fontSize: 11)),
+          ]),
+        ]),
+      ),
+      const SizedBox(height: 12),
+      Row(children: [
+        Expanded(child: Container(padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: Colors.white.withOpacity(0.07), borderRadius: BorderRadius.circular(10)), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('🌡️', style: TextStyle(fontSize: 18)), const SizedBox(height: 4), const Text('Teplota', style: TextStyle(color: Colors.white38, fontSize: 10)), Text(_weatherTemp != null ? '${_weatherTemp!.toStringAsFixed(0)}°C' : '--', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold))]))),
+        const SizedBox(width: 12),
+        Expanded(child: Container(padding: const EdgeInsets.all(10), decoration: BoxDecoration(color: Colors.white.withOpacity(0.07), borderRadius: BorderRadius.circular(10)), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('☁️', style: TextStyle(fontSize: 18)), const SizedBox(height: 4), const Text('Oblačnosť', style: TextStyle(color: Colors.white38, fontSize: 10)), Text(_weatherCloudCover != null ? '$_weatherCloudCover%' : '--', style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold))]))),
+      ]),
+      const SizedBox(height: 12),
+      GestureDetector(onTap: _fetchWeather, child: Container(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8), decoration: BoxDecoration(color: Colors.white12, borderRadius: BorderRadius.circular(10)), child: const Row(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.refresh, color: Colors.white54, size: 14), SizedBox(width: 6), Text('Obnoviť', style: TextStyle(color: Colors.white54, fontSize: 12))]))),
+    ]);
+  }
+
+  Widget _buildEventsTab() {
+    final events = _getUpcomingEvents();
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text('Najbližších 30 dní', style: TextStyle(color: _uiColorDim, fontSize: 11)),
+      const SizedBox(height: 10),
+      if (events.isEmpty) const Text('Žiadne úkazy', style: TextStyle(color: Colors.white54, fontSize: 12))
+      else ...events.map((e) => Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(color: Colors.white.withOpacity(0.06), borderRadius: BorderRadius.circular(10)),
+        child: Row(children: [Text(e['emoji']!, style: const TextStyle(fontSize: 18)), const SizedBox(width: 10), Expanded(child: Text(e['name']!, style: const TextStyle(color: Colors.white, fontSize: 13))), Text(e['date']!, style: const TextStyle(color: Colors.white38, fontSize: 12))]),
+      )),
+    ]);
   }
 
   Widget _buildLockIndicator() {
@@ -584,11 +650,7 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
         child: GestureDetector(onTap: _unlockPosition, child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           decoration: BoxDecoration(color: Colors.amber.withOpacity(0.2), borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.amber, width: 1.5)),
-          child: const Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.lock, color: Colors.amber, size: 14),
-            SizedBox(width: 6),
-            Text('Expozícia zamknutá — ťukni pre odomknutie', style: TextStyle(color: Colors.amber, fontSize: 11, fontWeight: FontWeight.bold)),
-          ]),
+          child: const Row(mainAxisSize: MainAxisSize.min, children: [Icon(Icons.lock, color: Colors.amber, size: 14), SizedBox(width: 6), Text('Expozícia zamknutá — ťukni pre odomknutie', style: TextStyle(color: Colors.amber, fontSize: 11, fontWeight: FontWeight.bold))]),
         )),
       ))),
     );
@@ -606,13 +668,7 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
           final isSelected = i == _selectedCameraIndex;
           return GestureDetector(
             onTap: _isSwitchingCamera ? null : () => _switchCamera(i),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              margin: const EdgeInsets.symmetric(horizontal: 3),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(color: isSelected ? _uiColor : Colors.transparent, borderRadius: BorderRadius.circular(14)),
-              child: Text(labels[i], style: TextStyle(color: isSelected ? Colors.black : _uiColor, fontSize: 13, fontWeight: FontWeight.bold)),
-            ),
+            child: AnimatedContainer(duration: const Duration(milliseconds: 200), margin: const EdgeInsets.symmetric(horizontal: 3), padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: isSelected ? _uiColor : Colors.transparent, borderRadius: BorderRadius.circular(14)), child: Text(labels[i], style: TextStyle(color: isSelected ? Colors.black : _uiColor, fontSize: 13, fontWeight: FontWeight.bold))),
           );
         })),
       )),
@@ -620,11 +676,7 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
   }
 
   Widget _buildCountdown() {
-    return Center(child: Container(
-      width: 120, height: 120,
-      decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.black.withOpacity(0.6), border: Border.all(color: _uiColor, width: 3)),
-      child: Center(child: Text('$_timerCountdown', style: TextStyle(color: _uiColor, fontSize: 60, fontWeight: FontWeight.bold))),
-    ));
+    return Center(child: Container(width: 120, height: 120, decoration: BoxDecoration(shape: BoxShape.circle, color: Colors.black.withOpacity(0.6), border: Border.all(color: _uiColor, width: 3)), child: Center(child: Text('$_timerCountdown', style: TextStyle(color: _uiColor, fontSize: 60, fontWeight: FontWeight.bold)))));
   }
 
   Widget _buildSkyMap() {
@@ -649,17 +701,11 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
         if (smoothedPos == null) return const SizedBox();
         return AnimatedBuilder(
           animation: Listenable.merge([_pulseAnimation, _rotateAnimation]),
-          builder: (_, __) => CustomPaint(
-            painter: TargetCirclePainter(center: smoothedPos, radius: 60 * _pulseAnimation.value, rotation: _rotateAnimation.value, color: _targetColor, isLocked: _isLocked, isSun: _sunMode),
-            child: const SizedBox.expand(),
-          ),
+          builder: (_, __) => CustomPaint(painter: TargetCirclePainter(center: smoothedPos, radius: 60 * _pulseAnimation.value, rotation: _rotateAnimation.value, color: _targetColor, isLocked: _isLocked, isSun: _sunMode), child: const SizedBox.expand()),
         );
       } else {
         final angle = atan2(offset.dy, offset.dx);
-        return CustomPaint(
-          painter: TargetArrowPainter(centerX: cx, centerY: cy, angle: angle, altitude: _targetAltitude ?? 0, color: _targetColor, isSun: _sunMode),
-          child: const SizedBox.expand(),
-        );
+        return CustomPaint(painter: TargetArrowPainter(centerX: cx, centerY: cy, angle: angle, altitude: _targetAltitude ?? 0, color: _targetColor, isSun: _sunMode), child: const SizedBox.expand());
       }
     });
   }
@@ -691,21 +737,15 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
                 decoration: BoxDecoration(color: aboveHorizon ? (_sunMode ? Colors.orange.withOpacity(0.2) : Colors.blue.withOpacity(0.3)) : Colors.red.withOpacity(0.3), borderRadius: BorderRadius.circular(10), border: Border.all(color: aboveHorizon ? (_sunMode ? Colors.orange : Colors.blue) : Colors.red)),
                 child: Text(aboveHorizon ? '↑ NAD' : '↓ POD', style: TextStyle(color: _uiColorDim, fontSize: 10, fontWeight: FontWeight.bold)),
               ),
-              const SizedBox(width: 4),
-              // Grid toggle
-              _iconBtn(Icons.grid_on, _showGrid, () => setState(() => _showGrid = !_showGrid)),
-              const SizedBox(width: 4),
-              // Weather toggle
-              _iconBtn(Icons.cloud, _showWeather, () { setState(() => _showWeather = !_showWeather); if (_showWeather && _weatherTemp == null) _fetchWeather(); }),
-              const SizedBox(width: 4),
-              // Events toggle
-              _iconBtn(Icons.event, _showEvents, () => setState(() => _showEvents = !_showEvents)),
-              const SizedBox(width: 4),
-              // Night mode
-              _iconBtn(Icons.bedtime, _nightMode, () => setState(() => _nightMode = !_nightMode), activeColor: Colors.red.shade300),
-              const SizedBox(width: 4),
-              // Controls
-              _iconBtn(Icons.tune, _showControls, () => setState(() => _showControls = !_showControls)),
+              const SizedBox(width: 6),
+              GestureDetector(
+                onTap: () => _openPanel(0),
+                child: Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(color: _showPanel ? _uiColor.withOpacity(0.3) : Colors.transparent, borderRadius: BorderRadius.circular(8), border: Border.all(color: _showPanel ? _uiColor.withOpacity(0.6) : Colors.white38)),
+                  child: Icon(Icons.tune, color: _showPanel ? _uiColor : Colors.white, size: 18),
+                ),
+              ),
             ]),
           ]),
           const SizedBox(height: 6),
@@ -727,53 +767,11 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
     );
   }
 
-  Widget _iconBtn(IconData icon, bool active, VoidCallback onTap, {Color? activeColor}) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(6),
-        decoration: BoxDecoration(
-          color: active ? (activeColor ?? _uiColor).withOpacity(0.3) : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: active ? (activeColor ?? _uiColor).withOpacity(0.6) : Colors.white24),
-        ),
-        child: Icon(icon, color: active ? (activeColor ?? _uiColor) : Colors.white54, size: 16),
-      ),
-    );
-  }
-
   Widget _infoChip(String label, String value) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(color: _bgColor, borderRadius: BorderRadius.circular(8), border: Border.all(color: _uiColor.withOpacity(0.2))),
-      child: RichText(text: TextSpan(children: [
-        TextSpan(text: '$label ', style: TextStyle(color: _uiColorDim, fontSize: 10)),
-        TextSpan(text: value, style: TextStyle(color: _uiColor, fontSize: 11, fontWeight: FontWeight.bold)),
-      ])),
-    );
-  }
-
-  Widget _buildControlsPanel() {
-    return Positioned(
-      top: 140, left: 16, right: 16,
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(color: _nightMode ? Colors.red.shade900.withOpacity(0.85) : Colors.black.withOpacity(0.75), borderRadius: BorderRadius.circular(16), border: Border.all(color: _nightMode ? Colors.red.shade800 : Colors.white12)),
-        child: Column(children: [
-          Row(children: [Icon(Icons.brightness_6, color: _uiColorDim, size: 18), const SizedBox(width: 8), Text('Expozícia', style: TextStyle(color: _uiColorDim, fontSize: 12)), const Spacer(), Text(_exposureOffset.toStringAsFixed(1), style: TextStyle(color: _uiColor, fontSize: 12))]),
-          SliderTheme(data: SliderThemeData(activeTrackColor: _uiColor, inactiveTrackColor: _uiColor.withOpacity(0.2), thumbColor: _uiColor), child: Slider(value: _exposureOffset, min: _minExposure, max: _maxExposure, divisions: 16, onChanged: _setExposure)),
-          Row(children: [Icon(Icons.zoom_in, color: _uiColorDim, size: 18), const SizedBox(width: 8), Text('Zoom', style: TextStyle(color: _uiColorDim, fontSize: 12)), const Spacer(), Text('${_zoomLevel.toStringAsFixed(1)}x', style: TextStyle(color: _uiColor, fontSize: 12))]),
-          SliderTheme(data: SliderThemeData(activeTrackColor: _uiColor, inactiveTrackColor: _uiColor.withOpacity(0.2), thumbColor: _uiColor), child: Slider(value: _zoomLevel, min: 1.0, max: _maxZoom, onChanged: _setZoom)),
-          Row(children: [
-            Icon(Icons.timer, color: _uiColorDim, size: 18), const SizedBox(width: 8),
-            Text('Časovač', style: TextStyle(color: _uiColorDim, fontSize: 12)), const Spacer(),
-            ...[0, 3, 5, 10].map((s) => GestureDetector(
-              onTap: () => setState(() => _timerSeconds = s),
-              child: Container(margin: const EdgeInsets.only(left: 6), padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4), decoration: BoxDecoration(color: _timerSeconds == s ? _uiColor : _uiColor.withOpacity(0.1), borderRadius: BorderRadius.circular(8)), child: Text(s == 0 ? 'OFF' : '${s}s', style: TextStyle(color: _timerSeconds == s ? Colors.black : _uiColor, fontSize: 11, fontWeight: FontWeight.bold))),
-            )),
-          ]),
-        ]),
-      ),
+      child: RichText(text: TextSpan(children: [TextSpan(text: '$label ', style: TextStyle(color: _uiColorDim, fontSize: 10)), TextSpan(text: value, style: TextStyle(color: _uiColor, fontSize: 11, fontWeight: FontWeight.bold))])),
     );
   }
 
@@ -819,28 +817,22 @@ class _CameraScreenState extends State<CameraScreen> with TickerProviderStateMix
   }
 }
 
-// === PAINTERS ===
-
 class GridPainter extends CustomPainter {
   final Color color;
   GridPainter({required this.color});
-
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()..color = color..strokeWidth = 0.8;
-    // 3x3 grid
     canvas.drawLine(Offset(size.width / 3, 0), Offset(size.width / 3, size.height), paint);
     canvas.drawLine(Offset(size.width * 2 / 3, 0), Offset(size.width * 2 / 3, size.height), paint);
     canvas.drawLine(Offset(0, size.height / 3), Offset(size.width, size.height / 3), paint);
     canvas.drawLine(Offset(0, size.height * 2 / 3), Offset(size.width, size.height * 2 / 3), paint);
-    // Center crosshair
     final cx = size.width / 2, cy = size.height / 2;
     final cp = Paint()..color = color.withOpacity(0.8)..strokeWidth = 1;
     canvas.drawLine(Offset(cx - 20, cy), Offset(cx + 20, cy), cp);
     canvas.drawLine(Offset(cx, cy - 20), Offset(cx, cy + 20), cp);
     canvas.drawCircle(Offset(cx, cy), 3, Paint()..color = color.withOpacity(0.8));
   }
-
   @override
   bool shouldRepaint(GridPainter old) => false;
 }
@@ -849,15 +841,12 @@ class SkyMapPainter extends CustomPainter {
   final double moonAzimuth, moonAltitude, sunAzimuth, sunAltitude, deviceAzimuth;
   final bool nightMode, sunMode;
   SkyMapPainter({required this.moonAzimuth, required this.moonAltitude, required this.sunAzimuth, required this.sunAltitude, required this.deviceAzimuth, this.nightMode = false, this.sunMode = false});
-
   @override
   void paint(Canvas canvas, Size size) {
     final cx = size.width / 2, cy = size.height / 2, r = size.width / 2 - 4;
     canvas.drawCircle(Offset(cx, cy), r, Paint()..color = nightMode ? Colors.red.shade900 : const Color(0xFF0A0A2A));
     canvas.drawCircle(Offset(cx, cy), r * 0.95, Paint()..color = Colors.white.withOpacity(0.12)..style = PaintingStyle.stroke..strokeWidth = 0.5);
-    for (double alt in [30, 60]) {
-      canvas.drawCircle(Offset(cx, cy), r * (1 - alt / 90) * 0.95, Paint()..color = Colors.white.withOpacity(0.1)..style = PaintingStyle.stroke..strokeWidth = 0.5);
-    }
+    for (double alt in [30, 60]) { canvas.drawCircle(Offset(cx, cy), r * (1 - alt / 90) * 0.95, Paint()..color = Colors.white.withOpacity(0.1)..style = PaintingStyle.stroke..strokeWidth = 0.5); }
     final dirPaint = TextPainter(textDirection: TextDirection.ltr);
     for (var entry in {'N': 0.0, 'E': 90.0, 'S': 180.0, 'W': 270.0}.entries) {
       final angle = (entry.value - deviceAzimuth) * pi / 180;
@@ -884,7 +873,6 @@ class SkyMapPainter extends CustomPainter {
     final labelTp = TextPainter(text: const TextSpan(text: 'OBLOHA', style: TextStyle(color: Colors.white30, fontSize: 7, letterSpacing: 1)), textDirection: TextDirection.ltr)..layout();
     labelTp.paint(canvas, Offset(cx - labelTp.width / 2, size.height - 12));
   }
-
   @override
   bool shouldRepaint(SkyMapPainter old) => true;
 }
@@ -895,7 +883,6 @@ class TargetCirclePainter extends CustomPainter {
   final Color color;
   final bool isLocked, isSun;
   TargetCirclePainter({required this.center, required this.radius, required this.rotation, required this.color, this.isLocked = false, this.isSun = false});
-
   @override
   void paint(Canvas canvas, Size size) {
     canvas.drawCircle(center, radius, Paint()..color = color.withOpacity(0.12)..style = PaintingStyle.stroke..strokeWidth = 20..maskFilter = const MaskFilter.blur(BlurStyle.normal, 15));
@@ -919,7 +906,6 @@ class TargetCirclePainter extends CustomPainter {
     final tp = TextPainter(text: TextSpan(text: label, style: TextStyle(color: color.withOpacity(0.9), fontSize: 12, fontWeight: FontWeight.bold, shadows: [Shadow(color: Colors.black, blurRadius: 4)])), textDirection: TextDirection.ltr)..layout();
     tp.paint(canvas, Offset(center.dx - tp.width / 2, center.dy + radius + 14));
   }
-
   @override
   bool shouldRepaint(TargetCirclePainter old) => old.radius != radius || old.rotation != rotation || old.isLocked != isLocked || old.center != center;
 }
@@ -929,7 +915,6 @@ class TargetArrowPainter extends CustomPainter {
   final Color color;
   final bool isSun;
   TargetArrowPainter({required this.centerX, required this.centerY, required this.angle, required this.altitude, required this.color, this.isSun = false});
-
   @override
   void paint(Canvas canvas, Size size) {
     final ax = centerX + cos(angle) * 120.0, ay = centerY + sin(angle) * 120.0;
@@ -946,7 +931,6 @@ class TargetArrowPainter extends CustomPainter {
     final altTp = TextPainter(text: TextSpan(text: '${altitude.toStringAsFixed(0)}°', style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold)), textDirection: TextDirection.ltr)..layout();
     altTp.paint(canvas, Offset(ax - altTp.width / 2, ay + 14));
   }
-
   @override
   bool shouldRepaint(TargetArrowPainter old) => true;
 }
